@@ -1268,7 +1268,7 @@ function woocommerce_upayments_init()
             $whitelabled=$data['isWhiteLabel'];
             $methods=[];
             if($payment_methods['knet'] == 1){ $methods['payment']['knet'] = __('KNET', $this->domain);}
-            if($payment_methods['apple_pay_knet'] == 1){$methods['payment']['apple-pay-knet'] = __('Apple Pay Knet', $this->domain);}
+            if(isset($payment_methods['apple_pay_knet']) && $payment_methods['apple_pay_knet'] == 1){$methods['payment']['apple-pay-knet'] = __('Apple Pay Knet', $this->domain);}
             if($payment_methods['credit_card'] == 1){$methods['payment']['cc'] = __('Credit Card', $this->domain);}
              if($payment_methods['apple_pay'] == 1){$methods['payment']['apple-pay'] = __('Apple Pay Credit card', $this->domain);}
             if($payment_methods['samsung_pay'] == 1){$methods['payment']['samsung-pay'] = __('Samsung Pay', $this->domain); }
