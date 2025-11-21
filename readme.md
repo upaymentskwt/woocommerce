@@ -119,8 +119,8 @@ Supported currency codes are: KWD, SAR, USD, BHD, EUR, OMR, QAR, AED
 = 2.1.2 =
 - Payment Confirmation Mail - Product name issue fixed.
 
-= 2.1.3 =
-- GCC Option Updated.
-
 = 2.1.4 =
 - Order Status Issue Fixed.
+
+= 2.1.5 =
+-Apple Debit Card Option Added
