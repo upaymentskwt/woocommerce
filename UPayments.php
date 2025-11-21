@@ -265,7 +265,7 @@ function woocommerce_upayments_init()
 
             <?php
 
-            $icons = [];
+            $icons = null;
             $total = "0";
             $total = WC()->cart->get_total('');
             $language=get_locale();
@@ -280,7 +280,6 @@ function woocommerce_upayments_init()
                 $icons = $payment_data['payment'];
                 $whitelabled = $payment_data['whitelabled'];
             }
-            if(!empty($icons)) {
             if($whitelabled == true){
             ?>
                 <div class="payment-buttons">
@@ -338,7 +337,6 @@ function woocommerce_upayments_init()
                 </div>
             <?php
             }
-        }
             ?>
             <input id="upayment_payment_type" type="hidden" name="upayment_payment_type" value="upayments"/>
             </div>
