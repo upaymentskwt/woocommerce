@@ -37,13 +37,13 @@ jQuery(function ($) {
                         console.log('apple pay available');
                     } else {
                         console.log('apple not available');
-                        $('#upay-button-apple-pay').hide();
+                        // $('#upay-button-apple-pay').hide();
                     }
                 });
             }
         } else {
             console.log('apple not available');
-            $('#upay-button-apple-pay').hide();
+            // $('#upay-button-apple-pay').hide();
 
         }
     }

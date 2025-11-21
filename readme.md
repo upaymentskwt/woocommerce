@@ -116,3 +116,6 @@ Supported currency codes are: KWD, SAR, USD, BHD, EUR, OMR, QAR, AED
 = 2.0.7 =
 - Stable with default Design updates
 
+= 2.0.8 =
+- Apple Debit Card Option Added
+

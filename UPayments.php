@@ -2,7 +2,7 @@
 /*
 Plugin Name: UPayments
 Description: UPayments Plugin allows merchants to accept KNET, Cards, Samsung Pay, Apple Pay, Google Pay Payments.
-Version: 2.0.7
+Version: 2.0.8
 Requires at least: 4.0
 WC requires at least: 2.4
 PHP Requires  at least: 5.5
@@ -247,7 +247,17 @@ function woocommerce_upayments_init()
                 {
                     if ($key != "both")
                     {
-                        $icon = ' <img style="height: 13px;" src="' . UPayments_PLUGIN_URL . "assets/images/" . esc_attr($key) . '.png" alt="' . esc_attr($value) . '"  title="' . esc_attr($value) . '" />'; ?>
+                        if($key == 'apple-pay') {
+                            $icon = ' <img style="height: 13px;" src="' . UPayments_PLUGIN_URL . "assets/images/" . esc_attr('apple-pay') . '.png" alt="' . esc_attr($value) . '"  title="' . esc_attr($value) . '" />
+                            <img style="height: 13px;" src="' . UPayments_PLUGIN_URL . "assets/images/" . esc_attr('cc') . '.png" alt="' . esc_attr($value) . '"  title="' . esc_attr($value) . '" />'; 
+                        } else if($key == 'apple-pay-knet') {
+                            $icon = ' <img style="height: 13px;" src="' . UPayments_PLUGIN_URL . "assets/images/" . esc_attr('apple-pay') . '.png" alt="' . esc_attr($value) . '"  title="' . esc_attr($value) . '" />
+                            <img style="height: 13px;" src="' . UPayments_PLUGIN_URL . "assets/images/" . esc_attr('knet') . '.png" alt="' . esc_attr($value) . '"  title="' . esc_attr($value) . '" />'; 
+                        } else {
+                            $icon = ' <img style="height: 13px;" src="' . UPayments_PLUGIN_URL . "assets/images/" . esc_attr($key) . '.png" alt="' . esc_attr($value) . '"  title="' . esc_attr($value) . '" />'; 
+                        }
+                        
+                    ?>
                             <li>
                                 <span class="<?php echo esc_attr($key);?>-upayments-button">
                                 <input id="upayment_payment_type_<?php echo esc_attr($key); ?>" type="radio" class="input-radio"
@@ -582,6 +592,7 @@ function woocommerce_upayments_init()
                     $order->delete_meta_data("UPayments_TranID");
                     $order->delete_meta_data("UPayments_Ref");
                     $order->delete_meta_data("UPayments_Auth");
+                    $order->delete_meta_data("_payment_method_title");
 
                     $order->add_meta_data("UPayments_Result", $status);
                     if (!empty($PaymentID))
@@ -594,6 +605,7 @@ function woocommerce_upayments_init()
                     $order->add_meta_data("UPayments_TranID", $TranID);
                     $order->add_meta_data("UPayments_Ref", $Ref);
                     $order->add_meta_data("UPayments_Auth", $Auth);
+                    $order->add_meta_data("_payment_method_title", 'UPayments');
 
                     $order->save_meta_data();
 
@@ -618,7 +630,7 @@ function woocommerce_upayments_init()
                         $this->log("Ret Order CAPTURED Status");
 
                         $paid_order_status = 'processing';
-                        if ($this->getIsOrderComplete()) {
+                        if ($order->get_status() == 'completed' || $this->getIsOrderComplete()) {
                             $paid_order_status = 'completed';
                         }
 
@@ -714,6 +726,7 @@ function woocommerce_upayments_init()
                         $order->delete_meta_data("UPayments_TranID");
                         $order->delete_meta_data("UPayments_Ref");
                         $order->delete_meta_data("UPayments_Auth");
+                        $order->delete_meta_data("_payment_method_title");
 
                         $order->add_meta_data("UPayments_Result", $status);
                         $order->add_meta_data("UPayments_PaymentID", $PaymentID);
@@ -723,6 +736,7 @@ function woocommerce_upayments_init()
                         $order->add_meta_data("UPayments_TranID", $TranID);
                         $order->add_meta_data("UPayments_Ref", $Ref);
                         $order->add_meta_data("UPayments_Auth", $Auth);
+                        $order->add_meta_data("_payment_method_title", 'UPayments');
 
                         $order->save_meta_data();
 
@@ -733,7 +747,7 @@ function woocommerce_upayments_init()
                             $this->log("Order status CAPTURED");
 
                             $paid_order_status = 'processing';  
-                            if ($this->getIsOrderComplete()) {      
+                            if ($order->get_status() == 'completed' || $this->getIsOrderComplete()) {     
                                 $paid_order_status = 'completed';   
                             }   
                                 
@@ -1194,10 +1208,11 @@ function woocommerce_upayments_init()
             $whitelabled=$data['isWhiteLabel'];
             $methods=[];
             if($payment_methods['knet'] == 1){ $methods['payment']['knet'] = __('KNET', $this->domain);}
+            if(isset($payment_methods['apple_pay_knet']) && $payment_methods['apple_pay_knet'] == 1){$methods['payment']['apple-pay-knet'] = __('Apple Pay Knet', $this->domain);}
             if($payment_methods['credit_card'] == 1){$methods['payment']['cc'] = __('Credit Card', $this->domain);}
+            if($payment_methods['apple_pay'] == 1){$methods['payment']['apple-pay'] = __('Apple Pay Credit card', $this->domain);}
             if($payment_methods['samsung_pay'] == 1){$methods['payment']['samsung-pay'] = __('Samsung Pay', $this->domain); }
             if($payment_methods['google_pay'] == 1){$methods['payment']['google-pay'] = __('Google Pay', $this->domain);}
-            if($payment_methods['apple_pay'] == 1){$methods['payment']['apple-pay'] = __('Apple Pay', $this->domain);}
             $methods['whitelabled'] = $whitelabled;
             return $methods;
             }
