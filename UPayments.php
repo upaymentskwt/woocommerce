@@ -326,9 +326,11 @@ function woocommerce_upayments_init()
 
                 <?php
                 foreach ($icons as $key => $value) {
-                ?>
-                    <span class="payment-method-icon" style="margin-right: 5px;" id="upay-button-<?php echo esc_attr($key);?>"><img src="<?php echo UPayments_PLUGIN_URL;?>assets/images/<?php echo esc_attr($key);?>.png" alt="<?php echo esc_attr($value);?>"  title="<?php echo esc_attr($value);?>"/></span>
-                    <?php
+                    if($key != 'apple-pay-knet') {
+                        ?>
+                        <span class="payment-method-icon" style="margin-right: 5px;" id="upay-button-<?php echo esc_attr($key);?>"><img src="<?php echo UPayments_PLUGIN_URL;?>assets/images/<?php echo esc_attr($key);?>.png" alt="<?php echo esc_attr($value);?>"  title="<?php echo esc_attr($value);?>"/></span>
+                        <?php
+                    }
                 }
                 ?>
                 <span class="payment-method-price"><?php echo $total;?> <?php echo $currency;?></span>
