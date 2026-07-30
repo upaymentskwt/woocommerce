@@ -10,7 +10,7 @@ class Fields
 {
     public static function init()
     {
-        add_action('woocommerce_checkout_process', [__CLASS__, 'validate']);
+        // add_action('woocommerce_checkout_process', [__CLASS__, 'validate']);
         add_filter('woocommerce_checkout_fields', [__CLASS__, 'add']);
         add_action('woocommerce_checkout_create_order', [__CLASS__, 'save'], 20, 1);
     }

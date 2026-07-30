@@ -26,6 +26,7 @@ require_once __DIR__ . '/vendor/plugin-update-checker/plugin-update-checker.php'
 
 use UPayments\Subscription\Cron\Scheduler;
 use UPayments\Subscription\Checkout\Fields;
+use UPayments\Subscription\Helpers\Utils;
 use UPayments\Subscription\Manager;
 use YahnisElsts\PluginUpdateChecker\v5\PucFactory;
 
@@ -281,22 +282,6 @@ function woocommerceUpaymentsInit() {
                     'label'   => __( 'Allow customers to save card details (Tokenization)', $this->domain ),
                     'default' => 'yes', // Default to Enabled (per V2.2.1)
                 ),
-                // 'checkout_blocks_title' => array(
-                //     'title' => __( 'WooCommerce Block Checkout', $this->domain ),
-                //     'type'  => 'title',
-                // ),
-                // 'enable_block_checkout' => array(
-                //     'title'   => __( 'Enable Block Checkout', $this->domain ),
-                //     'type'    => 'text',
-                //     'description'   => __( 'Enable compatibility with the new WooCommerce Checkout Block', $this->domain ),
-                // ),
-                //disabled block setting for now.
-                // 'enable_block_checkout' => array(
-                //     'title'   => __( 'Enable Block Checkout', $this->domain ),
-                //     'type'    => 'checkbox',
-                //     'label'   => __( 'Enable compatibility with the new WooCommerce Checkout Block', $this->domain ),
-                //     'default' => 'yes',
-                // ),
                 'multimerchant_section_title' => array(
                     'title' => __( 'Multimerchant Configuration', $this->domain ),
                     'type'  => 'title',
@@ -424,6 +409,7 @@ function woocommerceUpaymentsInit() {
             $upayment_id    = $order->get_meta('UPayments_PaymentID');
 
             $style = "width: 100%;  margin-bottom: 1rem; background: #212B5F; padding: 20px; color: #fff; font-size: 22px;";
+            $status = '';
             if (isset($_GET["status"])){
                 $status = sanitize_text_field($_GET["status"]);
                 if ($status == "canceled"){
@@ -460,7 +446,8 @@ function woocommerceUpaymentsInit() {
                 </style>
                 <div class="payment-panel-wait">
                     <h3><?php esc_html_e("We are retrieving your payment status from UPayments, please wait...", $this->domain); ?></h3>
-                    <div class="img-container"><img src="<?php echo UP_PLUGIN_PATH; ?>assets/images/loader.gif" /></div>
+                    <div class="img-container"><img src="<?php echo UP_PLUGIN_PATH; ?>assets/images/loader.gif" alt="loader"/>
+                    </div>
                 </div>
             <?php
             } 
@@ -858,10 +845,11 @@ function woocommerceUpaymentsInit() {
                     $cardToken = sanitize_text_field($extension_data['card_token']);
                 }
 
-                $isSaveCard = false;
-                if(isset($extension_data['save_card'])){
-                    $isSaveCardRequested = $extension_data['save_card'] == 1 ? true : false;
+                $isSaveCardRequested = false;
+                if(isset($extension_data['save_card']) && $extension_data['save_card'] == 1){
+                    $isSaveCardRequested = true;
                 }
+                $isSaveCard = $isSaveCardRequested ? true : false;
 
                 if ($whitelabled){
                     $whitelabled = true;
@@ -872,7 +860,6 @@ function woocommerceUpaymentsInit() {
                             $order->add_meta_data("UPayments_Checkout_Selected", $upayment_payment_type);
                         }
                     $cardToken = sanitize_text_field($extension_data['card_token']);
-                    $isSaveCard = $src == 'cc' && $isSaveCardRequested;
                 }
 
                 // Checck if Upayments Payment type is empty then return error.
@@ -889,6 +876,8 @@ function woocommerceUpaymentsInit() {
                     return ["result" => "failure", "redirect" => wc_get_checkout_url()];
                 }
 
+                $subscription_plan = 'one_time';
+                $subscription_interval = 0;
                 if(isset($extension_data['upay_subscription_plan'])){
                     $subscription_plan = $extension_data['upay_subscription_plan'];
                 }
@@ -909,9 +898,10 @@ function woocommerceUpaymentsInit() {
                 }
 
                 $src = "knet";
-                $cardToken = null;
-                $isSaveCard = false;
+                $cardToken = '';
                 $isSaveCardRequested = sanitize_text_field($_POST["save_card"]) == 1 ? true : false;
+                $isSaveCard = $isSaveCardRequested ? true : false;
+
                 if ($whitelabled){
                     $whitelabled = true;
                     $upayment_payment_type = sanitize_text_field($_POST["upayment_payment_type"]);
@@ -921,9 +911,10 @@ function woocommerceUpaymentsInit() {
                             $order->add_meta_data("UPayments_Checkout_Selected", $upayment_payment_type);
                         }
                     $cardToken = sanitize_text_field($_POST["card_token"]);
-                    $isSaveCard = $src == 'cc' && $isSaveCardRequested;
                 }
 
+                $subscription_plan = 'one_time';
+                $subscription_interval = 0;
                 if (isset($_POST['upay_subscription_plan'])) {
                     $subscription_plan = sanitize_text_field($_POST['upay_subscription_plan']);
                 }
@@ -943,23 +934,20 @@ function woocommerceUpaymentsInit() {
                 }
             }
             
-            $customer_unq_token = null;
             $credit_card_token = $cardToken;
             $phone = str_replace(' ', '', $order_data["billing"]["phone"]); // Replaces all spaces with hyphens.
             $phone = preg_replace('/[^A-Za-z0-9\-]/','',$phone);
             $customer_unq_token = $phone;
-
+            $customerToken = '';
+            
             $user_id = get_current_user_id();
             if($user_id && !empty($customer_unq_token)) {
-                $customer_unq_token = $customer_unq_token.$user_id;
-            }
-
-            if (substr($customer_unq_token, 0, 1) === '0') {
-                $customer_unq_token = '1' . substr($customer_unq_token, 1);
+                $customerToken = Utils::generateDynamicToken($user_id, $customer_unq_token)['token'];
+                update_user_meta($user_id, 'customer_unique_token', $customerToken);
             }
 
             if($this->saveCardEnabled === 'yes' && $isSaveCard) {
-                $customerUnqToken = $this->getCustomerUniqueToken($customer_unq_token);
+                $customerUnqToken = $this->getCustomerUniqueToken($customerToken);
             } else {
                 $customerUnqToken = null;
                 $isSaveCard = false;
@@ -1023,7 +1011,7 @@ function woocommerceUpaymentsInit() {
                 "paymentGateway" => ["src" => $src,], 
                 "tokens" => [
                     "creditCard" => $credit_card_token, 
-                    "customerUniqueToken" => $customerUnqToken, 
+                    "customerUniqueToken" => $customerUnqToken,
                 ], 
                 "device" => [
                     "browser" => "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36 OPR/93.0.0.0", 
@@ -1050,14 +1038,15 @@ function woocommerceUpaymentsInit() {
             curl_setopt($ch, CURLOPT_URL, $this->getApiUrl('charge'));
             curl_setopt($ch, CURLOPT_POST, 1);
             curl_setopt($ch, CURLOPT_POSTFIELDS, $params);
-            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+            // uncomment when required
+            // curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
             curl_setopt($ch, CURLOPT_USERAGENT, $this->getUserAgent());
             curl_setopt($ch, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . $this->apiKey, "Accept: application/json", "Content-Type: application/json", ]);
 
             $response = curl_exec($ch);
-            $this->log('Response: ', $response);
+            $this->log('Response: ' . $response);
             curl_close($ch);
 
             try
@@ -1505,32 +1494,8 @@ function woocommerceUpaymentsInit() {
         {   
             $url = "https://apiv2api.upayments.com/api/v1/" . $apiRoute;
             if ($this->getMode()) {
-                $url = "https://sandboxapi.upayments.com/api/v1/" . $apiRoute;
-            }
-            return $url;
-        }
-
-        public function getAPIUrlForCreateToken()
-        {
-            $url = "https://apiv2api.upayments.com/api/v1/create-customer-unique-token";
-            if ($this->getMode()) {
-                $url = "https://sandboxapi.upayments.com/api/v1/create-customer-unique-token";
-            }
-            return $url;
-        }
-
-        public function getAPIUrlForCheckPaymentButtonStatus() {
-            $url = "https://apiv2api.upayments.com/api/v1/check-payment-button-status";
-            if ($this->getMode()) {
-                $url = "https://sandboxapi.upayments.com/api/v1/check-payment-button-status";
-            }
-            return $url;
-        }
-
-        public function getAPIUrlForRetreiveCards() {
-            $url = "https://apiv2api.upayments.com/api/v1/retrieve-customer-cards";
-            if ($this->getMode()) {
-                $url = "https://sandboxapi.upayments.com/api/v1/retrieve-customer-cards";
+                // $url = "https://sandboxapi.upayments.com/api/v1/" . $apiRoute;
+                $url = "https://dev-apiv2api.upayments.com/api/v1/" . $apiRoute;
             }
             return $url;
         }
@@ -1570,7 +1535,7 @@ function woocommerceUpaymentsInit() {
             if (!empty($phone))
             {
                 $token = $phone;
-                $params = json_encode(["customerUniqueToken" => $token, ]);
+                $params = json_encode(["customerUniqueToken" => $token ]);
                 $curl = curl_init();
                 curl_setopt_array($curl, 
                 [
@@ -1612,7 +1577,8 @@ function woocommerceUpaymentsInit() {
 
                 curl_setopt_array($curl, array(
                 CURLOPT_URL => $this->getAPIUrl('check-payment-button-status'),
-                CURLOPT_SSL_VERIFYPEER => false,
+                // uncomment when required
+                // CURLOPT_SSL_VERIFYPEER => false,
                 CURLOPT_RETURNTRANSFER => true,
                 CURLOPT_ENCODING => '',
                 CURLOPT_MAXREDIRS => 10,
@@ -1649,7 +1615,7 @@ function woocommerceUpaymentsInit() {
             return $payment_methods;
         }
 
-        public function getSavedCards($phone)
+        public function getSavedCards(string $phone)
         {
             $api_key =  $this->apiKey;
             $savedCards=null;
@@ -1660,7 +1626,8 @@ function woocommerceUpaymentsInit() {
                 curl_setopt_array($curl, [
                     CURLOPT_URL => $this->getAPIUrl('retrieve-customer-cards'),
                     CURLOPT_RETURNTRANSFER => true,
-                    CURLOPT_SSL_VERIFYPEER => false,
+                    // uncomment when required
+                    // curl_setopt($curl, CURLOPT_SSL_VERIFYPEER, false);
                     CURLOPT_USERAGENT => $this->getUserAgent(),
                     CURLOPT_ENCODING => "",
                     CURLOPT_MAXREDIRS => 10,
@@ -1685,57 +1652,48 @@ function woocommerceUpaymentsInit() {
             return $savedCards;
         }
 
-        public function getPaymentIcons()
+        public function getPaymentIcons(): ?array
         {
             $data = $this->getUpayPaymentMethods();
-            // Admin toggle (feature on/off)
-            $isSubscriptionFeatureEnabled = ($this->autoDeduction === 'yes');
 
-            // Cart state
-            $hasSubscriptionProduct = \UPayments\Subscription\Helpers\Utils::cartHasCustomType();
-            $hasNormalProduct      = \UPayments\Subscription\Helpers\Utils::cartHasNormalProduct();
+            if (($data['result'] ?? '') === 'failure' || empty($data['payButtons'])) {
+                return null;
+            }
 
-            // Subscription context = feature enabled AND subscription product in cart
-            $isSubscriptionContext = $isSubscriptionFeatureEnabled && $hasSubscriptionProduct && !$hasNormalProduct;
+            $payment_methods = $data['payButtons'];
 
-            if ($data['result'] !== 'failure') {
-                $payment_methods = $data['payButtons'];
-                $whitelabled     = $data['isWhiteLabel'];
-                $methods         = [];
+            // Subscription context: feature enabled AND custom type in cart AND NO normal products
+            $isSubscriptionContext = ($this->autoDeduction === 'yes')
+                && Utils::cartHasCustomType()
+                && !Utils::cartHasNormalProduct();
 
-                // If ONLY normal products in cart → allow all methods
-                if (!$isSubscriptionContext) {
-                    if ($payment_methods['knet'] == 1) {
-                        $methods['payment']['knet'] = __('KNET', $this->domain);
-                    }
+            // Map button keys to their display names
+            $availableMethods = [
+                'knet'           => ['key' => 'knet',           'title' => __('KNET', $this->domain)],
+                'apple_pay_knet' => ['key' => 'apple-pay-knet', 'title' => __('Apple Pay KNET', $this->domain)],
+                'credit_card'    => ['key' => 'cc',             'title' => __('Credit Card', $this->domain)],
+                'apple_pay'      => ['key' => 'apple-pay',      'title' => __('Apple Pay Credit Card', $this->domain)],
+                'samsung_pay'    => ['key' => 'samsung-pay',    'title' => __('Samsung Pay', $this->domain)],
+                'google_pay'     => ['key' => 'google-pay',     'title' => __('Google Pay', $this->domain)],
+            ];
 
-                    if (!empty($payment_methods['apple_pay_knet']) && $payment_methods['apple_pay_knet'] == 1) {
-                        $methods['payment']['apple-pay-knet'] = __('Apple Pay KNET', $this->domain);
-                    }
+            $methods = ['payment' => []];
 
-                    if ($payment_methods['credit_card'] == 1) {
-                        $methods['payment']['cc'] = __('Credit Card', $this->domain);
-                    }
-
-                    if ($payment_methods['apple_pay'] == 1) {
-                        $methods['payment']['apple-pay'] = __('Apple Pay Credit Card', $this->domain);
-                    }
-
-                    if ($payment_methods['samsung_pay'] == 1) {
-                        $methods['payment']['samsung-pay'] = __('Samsung Pay', $this->domain);
-                    }
-
-                    if ($payment_methods['google_pay'] == 1) {
-                        $methods['payment']['google-pay'] = __('Google Pay', $this->domain);
-                    }
-                }else{ // If subscription product in cart → ONLY CC allowed (per API requirement)
-                    if ($payment_methods['credit_card'] == 1) {
-                        $methods['payment']['cc'] = __('Credit Card', $this->domain);
-                    }
+            foreach ($availableMethods as $apiKey => $info) {
+                // If subscription context, restrict to credit card only
+                if ($isSubscriptionContext && $apiKey !== 'credit_card') {
+                    continue;
                 }
-                $methods['whitelabled'] = $whitelabled;
-                return $methods;
-            }            
+
+                // Add method if enabled in API response
+                if (!empty($payment_methods[$apiKey]) && $payment_methods[$apiKey] == 1) {
+                    $methods['payment'][$info['key']] = $info['title'];
+                }
+            }
+
+            $methods['whitelabled'] = $data['isWhiteLabel'] ?? false;
+
+            return $methods;
         }
 
         public function log($content)
@@ -1907,8 +1865,8 @@ function woocommerceUpaymentsInit() {
             $is_subscription_product = ($product->get_type() === 'custom_type');
 
             // Current cart state
-            $cart_has_subscription = \UPayments\Subscription\Helpers\Utils::cartHasCustomType();
-            $cart_has_normal       = \UPayments\Subscription\Helpers\Utils::cartHasNormalProduct();
+            $cart_has_subscription = Utils::cartHasCustomType();
+            $cart_has_normal       = Utils::cartHasNormalProduct();
 
             // If cart already has subscription product, block adding normal products
             if ($cart_has_subscription && !$is_subscription_product) {

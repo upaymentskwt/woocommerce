@@ -1,6 +1,7 @@
 <?php
 // Use the necessary Blocks Interfaces
 use Automattic\WooCommerce\Blocks\Payments\Integrations\AbstractPaymentMethodType;
+use UPayments\Subscription\Helpers\Utils;
 
 /**
  * UPayments Blocks Integration Class
@@ -85,7 +86,7 @@ class WCGatewayUPaymentsBlocks extends AbstractPaymentMethodType {
         
         // 1. Get payment icons and whitelabeled status
         if ( $this->gateway ) {
-            $payment_data = $this->gateway->getPaymentIcons(); 
+            $payment_data = $this->gateway->getPaymentIcons();
             if ( $payment_data ) {
                 $icons = $payment_data['payment'] ?? [];
                 $whitelabled = $payment_data['whitelabled'] ?? false;
@@ -96,7 +97,9 @@ class WCGatewayUPaymentsBlocks extends AbstractPaymentMethodType {
             if ( isset($loggedInUser['success']) && $loggedInUser['success'] ) {
                 $is_logged_in = true;
                 $user_id = get_current_user_id();
-                $savedCards = $this->gateway->getSavedCards($loggedInUser['phone'].$user_id);
+
+                $token = Utils::generateDynamicToken($user_id, $loggedInUser['phone'])['token'];
+                $savedCards = $this->gateway->getSavedCards($token);
 
                 $hasPhone = $loggedInUser['success'] && !empty($loggedInUser['phone']);
                 $save_card_on  = ($hasPhone || ($is_subscription_enabled && $hasPhone)) ? true : false;
