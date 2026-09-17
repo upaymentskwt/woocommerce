@@ -8,7 +8,8 @@
  * @var bool                    $save_card_enabled Flag indicating if save card is enabled.
  */
 
-defined('ABSPATH') || exit;
+defined( 'ABSPATH' ) || exit;
+use UPayments\Subscription\Helpers\Utils;
 ?>
 <style>
     .wc-toast {
@@ -93,8 +94,8 @@ defined('ABSPATH') || exit;
             ?>
                 <input id="save_card" type="hidden" name="save_card" value="1"/>
                 <?php
-                $phone = $loggedInUser['phone'] ?? '';
-                $savedCards = $gateway->getSavedCards($phone . $user_id);
+                $token = Utils::generateDynamicToken($user_id, $loggedInUser['phone'])['token'];
+                $savedCards = $gateway->getSavedCards($token);
                 
                 if (!empty($savedCards['result']) && $savedCards['result'] === 'success' && !empty($savedCards['data']) && is_array($savedCards['data'])) {
                     $cardList = $savedCards['data'];
@@ -164,7 +165,7 @@ defined('ABSPATH') || exit;
                         <span class="payment-method-icon" style="margin-right: 5px;" id="upay-button-<?php echo esc_attr($key); ?>">
                             <img src="<?php echo esc_url(UP_PLUGIN_URL . 'assets/images/' . esc_attr($key) . '.png'); ?>" alt="<?php echo esc_attr($value); ?>" title="<?php echo esc_attr($value); ?>"/>
                         </span>
-                    <?php endif;
+                    <?php endif; 
                 endforeach; ?>
                 <span class="payment-method-price"><?php echo esc_html($total); ?> <?php echo esc_html($currency); ?></span>
                 <span class="payment-method-icon2"><i class="fa fa-chevron-right"></i></span>

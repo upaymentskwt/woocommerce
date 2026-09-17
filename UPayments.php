@@ -3,7 +3,7 @@
  * Plugin Name: UPayments
  * Plugin URI: https://developers.upayments.com/reference/woocommerce
  * Description: UPayments Plugin with Unified payment gateway supporting Old/New design, Save Card, and Multimerchant. Supports Block Checkout, Auto Deduction for Subscriptions, Bookable Products.
- * Version: 3.1.1
+ * Version: 3.1.2
  * Author: <a href="https://developers.upayments.com/reference/woocommerce" target="_blank">UPayments Company</a>
  * Author URI: https://developers.upayments.com/reference/woocommerce
  * Requires at least: 5.6
@@ -254,14 +254,14 @@ function woocommerceUpaymentsInit() {
                     "type" => "checkbox",
                     "label" => __(" ", $this->id),
                     "default" => "no",
-                    "disabled" => true,
-                ), 
+                    "disabled" => false,
+                ),
                 "test_mode" => array(
                     "title" => __("Test Mode", $this->id),
                     "type" => "checkbox",
                     "label" => __(" ", $this->id),
                     "default" => "no"
-                ), 
+                ),
                 "is_order_complete" => array(
                     "title" => __('Show paid orders as "Completed"?', $this->id),
                     "type" => "checkbox",
@@ -1023,7 +1023,8 @@ function woocommerceUpaymentsInit() {
 
             $user_id = get_current_user_id();
             if($user_id && !empty($customer_unq_token)) {
-                $customer_unq_token = $customer_unq_token.$user_id;
+                $customer_unq_token = Utils::generateDynamicToken($user_id, $customer_unq_token)['token'];
+                update_user_meta($user_id, 'customer_unique_token', $customer_unq_token);
             }
 
             if (substr($customer_unq_token, 0, 1) === '0') {
@@ -1152,9 +1153,7 @@ function woocommerceUpaymentsInit() {
                 }else{
                     $result = json_decode($response, true);
                     $this->log(__("Create Payment Response:", $this->id));
-                    $this->log($result);
                     if (!$result){
-                        
                         WC()->session->set("refresh_totals", true);
                         wc_add_notice(__("Payment request failed. Empty Response Received.", $this->id) , "error");
                         return ["result" => "failure", "redirect" => wc_get_checkout_url()];
@@ -1600,10 +1599,11 @@ function woocommerceUpaymentsInit() {
         }
         
         public function getAPIUrl($apiRoute = "")
-        {   
+        {
             $url = "https://apiv2api.upayments.com/api/v1/" . $apiRoute;
             if ($this->getMode()) {
-                $url = "https://sandboxapi.upayments.com/api/v1/" . $apiRoute;
+                $url = "https://dev-apiv2api.upayments.com/api/v1/" . $apiRoute;
+                // $url = "https://sandboxapi.upayments.com/api/v1/" . $apiRoute;
             }
             return $url;
         }
@@ -1824,18 +1824,31 @@ function woocommerceUpaymentsInit() {
         /**
          * Write log entries to WooCommerce protected log storage
          *
-         * @param string $message
-         * @param mixed  $data
+         * @param mixed $message
+         * @param mixed $data
          * @return void
          */
-        public function log(string $message, $data = null)
+        public function log($message, $data = null)
         {
-            if ($this->debug !== 'yes') {
+            // Retrieve setting dynamically if $this->debug is not set
+            $debug_enabled = isset($this->debug) ? $this->debug : $this->get_option('debug');
+
+            // Accept both string 'yes', '1', 'on', or boolean true
+            if (!in_array($debug_enabled, ['yes', '1', 'on', true], true)) {
+                return;
+            }
+
+            if (!function_exists('wc_get_logger')) {
                 return;
             }
 
             $logger  = wc_get_logger();
             $context = ['source' => 'upayments-gateway'];
+
+            // Format message if an array or object was passed as first parameter
+            if (!is_string($message)) {
+                $message = print_r($this->redact_sensitive_data($message), true);
+            }
 
             if ($data !== null) {
                 $safe_data = $this->redact_sensitive_data($data);

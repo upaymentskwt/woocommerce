@@ -147,3 +147,7 @@ Supported currency codes are: KWD, SAR, USD, BHD, EUR, OMR, QAR, AED
 -Bookable Products
 
 = 3.1.1 = CRON scheduler issue fixed
+
+= 3.1.2 =
+ -Security Vulnerabilities resolved
+ -customer unique token updated

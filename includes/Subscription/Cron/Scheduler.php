@@ -94,16 +94,16 @@ class Scheduler
                     // Prevent invalid configs
                     if ((!$subscriptionPlan || $subscriptionInterval < 1) || $subscriptionPlan === 'one_time') {
                         break;
-                    }                    
+                    }
 
                     $order_date = $order->get_date_created();
                     $order_paid_date = $order->get_date_paid();
                     $order_completed_date = $order->get_date_completed();
                     $order_last_billed_date = $order->get_meta('_upay_last_billed_at');
 
-                    $start_date = $order_last_billed_date 
+                    $start_date = $order_last_billed_date
                         ?: $order_paid_date
-                        ?: $order_completed_date 
+                        ?: $order_completed_date
                         ?: $order_date;
 
                     if (!$start_date) {
@@ -113,7 +113,7 @@ class Scheduler
                     // --- FIX FOR TYPE CHECKER & STRINGS ---
                     if (is_string($start_date)) {
                         $start_date = new DateTime($start_date);
-                    } 
+                    }
                     // Handles both WC_DateTime and standard DateTime safely inside namespaces
                     elseif ($start_date instanceof DateTimeInterface) {
                         $start_date = new DateTime($start_date->format('Y-m-d H:i:s'), $start_date->getTimezone());
@@ -159,13 +159,13 @@ class Scheduler
                         $params = json_encode([
                             "order" =>[
                                 "id" => (string)$unique_order_id,
-                                "amount" => $order_total, 
+                                "amount" => $order_total,
                                 "currency" => $gateway->getCurrencyCode($currency) , 
                                 "description" => "Woocommerce Auto Deduction Order: " . $unique_order_id,
                                 "reference" => "Uniq Order ID: " . $unique_order_id,
                             ],
                             "reference" => [
-                                "id" => (string)$ref_id, 
+                                "id" => (string)$ref_id,
                             ],
                             "customer" => [
                                 "name" => $fullName,
@@ -288,30 +288,30 @@ class Scheduler
                                     $order->update_meta_data('_upay_subscription_status', 'active');
                                     $order->save();
                                 } elseif (!$result){ // result or response is empty
-                                    $logger->info('Payment request failed. Empty Response Received. ', $context);  
+                                    $logger->info('Payment request failed. Empty Response Received. ', $context);
                                     $retry_count = (int) $order->get_meta('_upay_retry_count');
                                     $order->update_meta_data('_upay_retry_count', $retry_count + 1);
                                     $order->update_meta_data('_upay_last_failed_reason', 'Gateway failure'); // optional
-                                    $order->save();  
+                                    $order->save();
                                 }elseif (isset($result["status"]) && !$result["status"]){ // result status is false
                                     $logger->info('Payment request failed. Status is false. ', $context + ['result' => $result]);
                                     $retry_count = (int) $order->get_meta('_upay_retry_count');
                                     $order->update_meta_data('_upay_retry_count', $retry_count + 1);
                                     $order->update_meta_data('_upay_last_failed_reason', 'Gateway failure'); // optional
-                                    $order->save();  
+                                    $order->save();
                                 }elseif (isset($result["message"]) && !isset($result["status"])){ // result message with no status
                                     $logger->info('Payment request failed. No status in response. ', $context + ['result' => $result]);
                                     $retry_count = (int) $order->get_meta('_upay_retry_count');
                                     $order->update_meta_data('_upay_retry_count', $retry_count + 1);
                                     $order->update_meta_data('_upay_last_failed_reason', 'Gateway failure'); // optional
-                                    $order->save();  
+                                    $order->save();
                                 }else{
                                     $status_message = __("UPayments: Something went wrong, please contact the merchant", 'upayments');
                                     $logger->info('Payment request failed. Unexpected response format. ', $context + $status_message);
                                     $retry_count = (int) $order->get_meta('_upay_retry_count');
                                     $order->update_meta_data('_upay_retry_count', $retry_count + 1);
                                     $order->update_meta_data('_upay_last_failed_reason', 'Gateway failure'); // optional
-                                    $order->save();  
+                                    $order->save();
                                 }
                             }
                         }catch(\Exception $e){
