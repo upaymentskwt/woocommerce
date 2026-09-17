@@ -23,7 +23,7 @@ class Fields
         $gateway = self::getGateway();
         $enable_subscription = $gateway->get_option('enable_subscriptions') === 'yes' ? true : false;
         if ($enable_subscription && empty($_POST['upay_subscription_plan'])) {
-            wc_add_notice(__('Please select a payment type.', $gateway->id), 'error');
+            wc_add_notice(__('Please select a payment type.', 'upayments'), 'error');
             return;
         }
 
@@ -33,12 +33,12 @@ class Fields
         }
 
         if ($enable_subscription && empty($_POST['upay_subscription_interval'])) {
-            wc_add_notice(__('Please select a billing interval.', $gateway->id), 'error');
+            wc_add_notice(__('Please select a billing interval.', 'upayments'), 'error');
             return;
         }
 
         if ($enable_subscription && !in_array($_POST['upay_subscription_interval'], ['', '1', '2', '3', '6'], true)) {
-            wc_add_notice(__('Invalid billing interval selected.', $gateway->id), 'error');
+            wc_add_notice(__('Invalid billing interval selected.', 'upayments'), 'error');
         }
 
         //code for additional restrictions can be added here
@@ -62,15 +62,15 @@ class Fields
         // Customer chooses payment type
         $fields['billing']['upay_subscription_plan'] = [
             'type'     => 'select',
-            'label'    => __('Purchase Type', $gateway->id),
+            'label'    => __('Purchase Type', 'upayments'),
             'required' => true,
             'options'  => [
-                'one_time' => __('One-time', $gateway->id),
-                'daily'    => __('Daily Subscription', $gateway->id),
-                'weekly'   => __('Weekly Subscription', $gateway->id),
-                'monthly'  => __('Monthly Subscription', $gateway->id),
-                'quarterly'   => __('Quarterly Subscription', $gateway->id),
-                'yearly'   => __('Yearly Subscription', $gateway->id),
+                'one_time' => __('One-time', 'upayments'),
+                'daily'    => __('Daily Subscription', 'upayments'),
+                'weekly'   => __('Weekly Subscription', 'upayments'),
+                'monthly'  => __('Monthly Subscription', 'upayments'),
+                'quarterly'   => __('Quarterly Subscription', 'upayments'),
+                'yearly'   => __('Yearly Subscription', 'upayments'),
             ],
             'priority' => 120,
         ];
@@ -78,10 +78,10 @@ class Fields
         // Customer chooses interval
         $fields['billing']['upay_subscription_interval'] = [
             'type'     => 'select',
-            'label'    => __('Billing Interval', $gateway->id),
+            'label'    => __('Billing Interval', 'upayments'),
             'required' => true,
             'options'  => [
-                ''  => __('Select interval', $gateway->id),
+                ''  => __('Select interval', 'upayments'),
             ],
             'priority' => 121,
         ];

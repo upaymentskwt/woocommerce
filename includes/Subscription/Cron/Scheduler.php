@@ -178,12 +178,6 @@ class Scheduler
                                 "token" => $credit_card_token,
                             ],
                         ]);
-    
-                        $gateway->log(__("Create Payment Request:", $gateway->domain));
-                        $gateway->log($params);
-    
-                        $gateway->log(__("API key:", $gateway->domain));
-                        $gateway->log($gateway->apiKey);
 
                         $order->update_meta_data('_upay_last_attempt_at', current_time('mysql'));
                         $order->save();
@@ -192,7 +186,6 @@ class Scheduler
                         curl_setopt($ch, CURLOPT_URL, $gateway->getApiUrl('auto-deduct'));
                         curl_setopt($ch, CURLOPT_POST, 1);
                         curl_setopt($ch, CURLOPT_POSTFIELDS, $params);
-                        // curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
                         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
                         curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
                         curl_setopt($ch, CURLOPT_USERAGENT, $gateway->getUserAgent());
@@ -200,17 +193,16 @@ class Scheduler
     
                         $response = curl_exec($ch);
                         $logger->info('Response recieved: ', $context + ['response' => $response]);
-                        curl_close($ch);           
+                        curl_close($ch);
                         
-                        try
-                        {
+                        try {
                             if (!$response){
                                 $logger->info('Auto deduction CRON Error :: ', $context + ['Order ID' => $unique_order_id, 'message' => 'Empty response received']);
                                 $retry_count = (int) $order->get_meta('_upay_retry_count');
                                 $order->update_meta_data('_upay_retry_count', $retry_count + 1);
                                 $order->update_meta_data('_upay_last_failed_reason', 'Gateway failure'); // optional
                                 $order->save();
-                                break;    
+                                break;
                             }else{
                                 $result = json_decode($response, true);
                                 $logger->info('Auto deduction Response:: ', $context + $result);
@@ -285,7 +277,7 @@ class Scheduler
 
                                     // Finalize order status
                                     $renewal_order->payment_complete($transaction['paymentId']);
-                                    $renewal_order->update_status('completed', __('Subscription renewal payment completed via UPayments Auto Deduction. PaymentID: '.$transaction['paymentId'], $gateway->domain));
+                                    $renewal_order->update_status('completed', __('Subscription renewal payment completed via UPayments Auto Deduction. PaymentID: '.$transaction['paymentId'], 'upayments'));
                                     $renewal_order->save();
 
                                     // Update subscription meta on parent order
@@ -314,7 +306,7 @@ class Scheduler
                                     $order->update_meta_data('_upay_last_failed_reason', 'Gateway failure'); // optional
                                     $order->save();  
                                 }else{
-                                    $status_message = __("UPayments: Something went wrong, please contact the merchant", $gateway->domain);
+                                    $status_message = __("UPayments: Something went wrong, please contact the merchant", 'upayments');
                                     $logger->info('Payment request failed. Unexpected response format. ', $context + $status_message);
                                     $retry_count = (int) $order->get_meta('_upay_retry_count');
                                     $order->update_meta_data('_upay_retry_count', $retry_count + 1);
@@ -324,14 +316,14 @@ class Scheduler
                             }
                         }catch(\Exception $e){
                             $message = $e->getMessage();
-                            $status_message = __("UPayments: Something went wrong, please contact the merchant", $gateway->domain);
+                            $status_message = __("UPayments: Something went wrong, please contact the merchant", 'upayments');
 
                             $logger->info('Create Payment Response: catch exception', $context + ['message' => $message]);
                             $logger->info('Error Exception: ', $context + ['message' => $status_message]);
                             $retry_count = (int) $order->get_meta('_upay_retry_count');
                             $order->update_meta_data('_upay_retry_count', $retry_count + 1);
                             $order->update_meta_data('_upay_last_failed_reason', 'Gateway failure'); // optional
-                            $order->save();  
+                            $order->save();
                         }
                     }
                 }
