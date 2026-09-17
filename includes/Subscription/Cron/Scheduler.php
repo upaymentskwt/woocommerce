@@ -62,8 +62,13 @@ class Scheduler
                 
                 foreach ($orders as $order) {
                     foreach ($order->get_items('line_item') as $item) {
-                        $product = $item->get_product();
-                        if ($product && $product->get_type() === 'custom_type') {
+                        $product = false;
+                        if (is_object($item) && method_exists($item, 'get_product')) {
+                            $product = $item->get_product();
+                        } elseif (is_array($item)) {
+                            $product = $order->get_product_from_item($item);
+                        }
+                        if ($product && is_object($product) && method_exists($product, 'get_type') && $product->get_type() === 'custom_type') {
                             $matched_orders[] = $order;
                             break; // stop checking this order
                         }
@@ -160,7 +165,7 @@ class Scheduler
                             "order" =>[
                                 "id" => (string)$unique_order_id,
                                 "amount" => $order_total,
-                                "currency" => $gateway->getCurrencyCode($currency) , 
+                                "currency" => $gateway->getCurrencyCode($currency),
                                 "description" => "Woocommerce Auto Deduction Order: " . $unique_order_id,
                                 "reference" => "Uniq Order ID: " . $unique_order_id,
                             ],
@@ -230,7 +235,12 @@ class Scheduler
                                     // Copy products from parent order
                                     foreach ($order->get_items('line_item') as $item) {
 
-                                        $product = $item->get_product();
+                                        $product = false;
+                                        if (is_object($item) && method_exists($item, 'get_product')) {
+                                            $product = $item->get_product();
+                                        } elseif (is_array($item)) {
+                                            $product = $order->get_product_from_item($item);
+                                        }
                                         if (!$product) {
                                             continue;
                                         }
@@ -394,6 +404,8 @@ class Scheduler
             case 'yearly':
                 $date->modify("+{$interval} year");
                 break;
+            default:
+                break;
         }
 
         return $date;
@@ -402,16 +414,12 @@ class Scheduler
     public static function upayShouldAttemptRetry(WC_Order $order): bool
     {
         $status = $order->get_meta('_upay_subscription_status') ?: 'active';
-        if (in_array($status, ['paused', 'cancelled'], true)) {
+        $retry_count = (int) $order->get_meta('_upay_retry_count');
+        if (in_array($status, ['paused', 'cancelled'], true) || $retry_count >= 3) {
             return false;
         }
 
-        $retry_count = (int) $order->get_meta('_upay_retry_count');
         $last_attempt = $order->get_meta('_upay_last_attempt_at');
-
-        if ($retry_count >= 3) {
-            return false; // max retries reached
-        }
 
         if (!$last_attempt) {
             return true; // first retry attempt

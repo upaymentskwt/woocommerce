@@ -38,7 +38,9 @@ $updateChecker = PucFactory::buildUpdateChecker(
 
 $vcsApi = $updateChecker->getVcsApi();
 
-$vcsApi->enableReleaseAssets();
+if ( is_object( $vcsApi ) && method_exists( $vcsApi, 'enableReleaseAssets' ) ) {
+    $vcsApi->enableReleaseAssets();
+}
 
 add_action( 'plugins_loaded', 'woocommerceUpaymentsInit' );
 function woocommerceUpaymentsInit() {
@@ -65,6 +67,8 @@ function woocommerceUpaymentsInit() {
         public $saveCardEnabled;
         public $charge;
         public $autoDeduction;
+        public const DISPLAY_NONE = 'display:none;';
+        public const PHONE_CLEAN_REGEX = '/[^A-Za-z0-9\-]/';
 
         public function __construct() {
             // Define ID, title, description, and settings.
@@ -180,14 +184,14 @@ function woocommerceUpaymentsInit() {
             });
 
             // Validation for phone number on account details page to ensure Save Card functionality works smoothly
-            add_action('woocommerce_save_account_details_errors', function ($errors, $user) {
+            add_action('woocommerce_save_account_details_errors', function ($errors) {
                 if (empty($_POST['billing_phone'])) {
                     $errors->add(
                         'billing_phone_error',
                         __('Billing phone number is required.', 'woocommerce')
                     );
                 }
-                if (!empty($_POST['billing_phone']) && !preg_match('/^\+?[0-9]{8,15}$/', $_POST['billing_phone'])) {
+                if (!empty($_POST['billing_phone']) && !preg_match('/^\+?\d{8,15}$/', $_POST['billing_phone'])) {
                     $errors->add(
                         'billing_phone_invalid',
                         __('Please enter a valid phone number.', 'woocommerce')
@@ -211,6 +215,8 @@ function woocommerceUpaymentsInit() {
 
             add_filter('woocommerce_add_to_cart_validation', [$this, 'restrictMixedCartProducts'], 10, 3);
             add_action('woocommerce_before_shop_loop_item_title', [$this, 'renderSubscriptionBadgeInProductList'], 9);
+            add_action('wp_ajax_upayments_get_payment_status', [$this, 'get_payment_status']);
+            add_action('wp_ajax_nopriv_upayments_get_payment_status', [$this, 'get_payment_status']);
         }
 
         public function init_form_fields() {
@@ -220,7 +226,7 @@ function woocommerceUpaymentsInit() {
                     "type" => "checkbox",
                     "label" => __(" ", $this->id),
                     "default" => "yes"
-                ), 
+                ),
                 'make_default_gateway' => [
                     'title'       => __('Default Gateway', $this->id),
                     'type'        => 'checkbox',
@@ -234,7 +240,7 @@ function woocommerceUpaymentsInit() {
                     "description" => __("This controls the title which the user sees during checkout.", $this->id),
                     "default" => $this->method_title,
                     "desc_tip" => true
-                ), 
+                ),
                 "description" => array(
                     "title" => __("Description", $this->id),
                     "type" => "textarea",
@@ -297,23 +303,23 @@ function woocommerceUpaymentsInit() {
                 ),
                 'iban_number' => array(
                     'type' => 'text',
-                    'css'  => 'display:none;',
+                    'css'  => self::DISPLAY_NONE,
                 ),
                 'cc_charge' => array(
                     'type' => 'text',
-                    'css'  => 'display:none;',
+                    'css'  => self::DISPLAY_NONE,
                 ),
                 'cc_charge_type' => array(
                     'type' => 'text',
-                    'css'  => 'display:none;',
+                    'css'  => self::DISPLAY_NONE,
                 ),
                 'knet_charge' => array(
                     'type' => 'text',
-                    'css'  => 'display:none;',
+                    'css'  => self::DISPLAY_NONE,
                 ),
                 'knet_charge_type' => array(
                     'type' => 'text',
-                    'css'  => 'display:none;',
+                    'css'  => self::DISPLAY_NONE,
                 ),
                 'multimerchant_accounts' => array(
                     'title'       => __( 'Multimerchant Accounts', $this->id ),
@@ -350,7 +356,7 @@ function woocommerceUpaymentsInit() {
                 
                 if ($billing_phone) {
                     $phone = str_replace(' ', '', $billing_phone); // Replaces all spaces with hyphens.
-                    $phone = preg_replace('/[^A-Za-z0-9\-]/','',$phone);
+                    $phone = preg_replace(self::PHONE_CLEAN_REGEX, '', $phone);
                     if (substr($phone, 0, 1) === '0') {
                         $phone = '1' . substr($phone, 1);
                     }
@@ -365,7 +371,7 @@ function woocommerceUpaymentsInit() {
                 
                 if (!empty($billing_phone)) {
                     $phone = str_replace(' ', '', $billing_phone); // Replaces all spaces with hyphens.
-                    $phone = preg_replace('/[^A-Za-z0-9\-]/','',$phone);
+                    $phone = preg_replace(self::PHONE_CLEAN_REGEX, '', $phone);
                     if (substr($phone, 0, 1) === '0') {
                         $phone = '1' . substr($phone, 1);
                     }
@@ -800,7 +806,7 @@ function woocommerceUpaymentsInit() {
                 'httpversion' => '1.1',
                 'blocking'    => true,
                 'headers'     => [
-                    'Authorization' => 'Bearer ' . $this->api_key,
+                    'Authorization' => 'Bearer ' . $this->apiKey,
                     'Content-Type'  => 'application/json',
                     'Accept'        => 'application/json',
                 ],
@@ -837,7 +843,7 @@ function woocommerceUpaymentsInit() {
         {
             global $woocommerce;
             if (isset($_GET["get_order_status"])){
-                $this->get_payment_staus();
+                $this->get_payment_status();
             }elseif (isset($_GET["page"])){
                 $this->return_from_upayments();
             }else{
@@ -869,10 +875,12 @@ function woocommerceUpaymentsInit() {
             $cart_has_custom_product = false;
 
             foreach ($order->get_items('line_item') as $item_id => $item) {
-                $product = $item->get_product();
+                $product = is_object($item) && method_exists($item, 'get_product')
+                    ? $item->get_product()
+                    : (is_array($item) ? $order->get_product_from_item($item) : false);
 
                 // Check custom type
-                if ($product && $product->get_type() === 'custom_type') {
+                if ($product && is_object($product) && method_exists($product, 'get_type') && $product->get_type() === 'custom_type') {
                     $cart_has_custom_product = true;
                 }
 
@@ -927,6 +935,7 @@ function woocommerceUpaymentsInit() {
                 }
 
                 $isSaveCard = false;
+                $isSaveCardRequested = false;
                 if(isset($extension_data['save_card'])){
                     $isSaveCardRequested = $extension_data['save_card'] == 1 ? true : false;
                 }
@@ -981,7 +990,7 @@ function woocommerceUpaymentsInit() {
                 $src = "knet";
                 $cardToken = null;
                 $isSaveCard = false;
-                $isSaveCardRequested = isset($_POST["save_card"]) ? (sanitize_text_field($_POST["save_card"]) == 1 ? true : false) : false;
+                $isSaveCardRequested = isset($_POST["save_card"]) && sanitize_text_field($_POST["save_card"]) == 1;
                 if ($whitelabled){
                     $whitelabled = true;
                     $upayment_payment_type = sanitize_text_field($_POST["upayment_payment_type"]);
@@ -1018,7 +1027,7 @@ function woocommerceUpaymentsInit() {
             $customer_unq_token = null;
             $credit_card_token = $cardToken;
             $phone = str_replace(' ', '', $order_data["billing"]["phone"]); // Replaces all spaces with hyphens.
-            $phone = preg_replace('/[^A-Za-z0-9\-]/','',$phone);
+            $phone = preg_replace(self::PHONE_CLEAN_REGEX, '', $phone);
             $customer_unq_token = $phone;
 
             $user_id = get_current_user_id();
@@ -1066,60 +1075,63 @@ function woocommerceUpaymentsInit() {
                 }
             }
 
-            $user_agent = isset($_SERVER['HTTP_USER_AGENT']) 
-                ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) 
+            $user_agent = isset($_SERVER['HTTP_USER_AGENT'])
+                ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT']))
                 : '';
-            
-            $screen_width     = isset($_POST['upay_screen_width']) ? sanitize_text_field(wp_unslash($_POST['upay_screen_width'])) : '1920';
-            $screen_height    = isset($_POST['upay_screen_height']) ? sanitize_text_field(wp_unslash($_POST['upay_screen_height'])) : '1080';
-            $color_depth      = isset($_POST['upay_color_depth']) ? sanitize_text_field(wp_unslash($_POST['upay_color_depth'])) : '24';
+
+            $screen_width  = isset($_POST['upay_screen_width']) ? sanitize_text_field(wp_unslash($_POST['upay_screen_width'])) : '1920';
+            $screen_height = isset($_POST['upay_screen_height']) ? sanitize_text_field(wp_unslash($_POST['upay_screen_height'])) : '1080';
+            $color_depth   = isset($_POST['upay_color_depth']) ? sanitize_text_field(wp_unslash($_POST['upay_color_depth'])) : '24';
             $timezone_offset  = isset($_POST['upay_timezone_offset']) ? sanitize_text_field(wp_unslash($_POST['upay_timezone_offset'])) : '0';
             $java_enabled     = isset($_POST['upay_java_enabled']) && $_POST['upay_java_enabled'] === 'true' ? 'true' : 'false';
-            $browser_language = isset($_POST['upay_browser_language']) 
-                ? sanitize_text_field(wp_unslash($_POST['upay_browser_language'])) 
-                : (isset($_SERVER['HTTP_ACCEPT_LANGUAGE']) ? substr(sanitize_text_field(wp_unslash($_SERVER['HTTP_ACCEPT_LANGUAGE'])), 0, 5) : 'en');
+            $browser_language = 'en';
+            if (isset($_POST['upay_browser_language'])) {
+                $browser_language = sanitize_text_field(wp_unslash($_POST['upay_browser_language']));
+            } elseif (isset($_SERVER['HTTP_ACCEPT_LANGUAGE'])) {
+                $browser_language = substr(sanitize_text_field(wp_unslash($_SERVER['HTTP_ACCEPT_LANGUAGE'])), 0, 5);
+            }
 
             $params = json_encode([
-                "returnUrl" => $success_url, 
-                "cancelUrl" => $error_url, 
-                "notificationUrl" => $ipn_url, 
+                "returnUrl" => $success_url,
+                "cancelUrl" => $error_url,
+                "notificationUrl" => $ipn_url,
                 "products" => $productArrayNew,
                 "order" =>[
-                    "amount" => $order_total, 
-                    "currency" => $this->getCurrencyCode($order_data["currency"]) , 
-                    "id" => $unique_order_id, 
-                ], 
+                    "amount" => $order_total,
+                    "currency" => $this->getCurrencyCode($order_data["currency"]),
+                    "id" => $unique_order_id,
+                ],
                 "reference" => [
-                    "id" => "".$order_id, 
-                ], 
+                    "id" => "".$order_id,
+                ],
                 "customer" => [
-                    "uniqueId" => $customer_unq_token, 
-                    "name" => $order_data["billing"]["first_name"] . " " . $order_data["billing"]["last_name"], 
-                    "email" => $order_data["billing"]["email"], 
-                    "mobile" => $phone, 
-                ], 
+                    "uniqueId" => $customer_unq_token,
+                    "name" => $order_data["billing"]["first_name"] . " " . $order_data["billing"]["last_name"],
+                    "email" => $order_data["billing"]["email"],
+                    "mobile" => $phone,
+                ],
                 "plugin" => [
-                    "src" => "woocommerce", 
-                ], 
-                "is_whitelabled" => $whitelabled, 
-                "language" => "en", 
-                "isSaveCard" => $isSaveCard, 
-                "paymentGateway" => ["src" => $src,], 
+                    "src" => "woocommerce",
+                ],
+                "is_whitelabled" => $whitelabled,
+                "language" => "en",
+                "isSaveCard" => $isSaveCard,
+                "paymentGateway" => ["src" => $src,],
                 "tokens" => [
-                    "creditCard" => $credit_card_token, 
-                    "customerUniqueToken" => $customerUnqToken, 
-                ], 
+                    "creditCard" => $credit_card_token,
+                    "customerUniqueToken" => $customerUnqToken,
+                ],
                 "device"            => [
-                    "browser"        => $user_agent, 
+                    "browser"        => $user_agent,
                     "browserDetails" => [
-                        "screenWidth"                 => (string) $screen_width, 
-                        "screenHeight"                => (string) $screen_height, 
-                        "colorDepth"                  => (string) $color_depth, 
-                        "javaEnabled"                 => (string) $java_enabled, 
-                        "language"                    => (string) $browser_language, 
+                        "screenWidth"                 => (string) $screen_width,
+                        "screenHeight"                => (string) $screen_height,
+                        "colorDepth"                  => (string) $color_depth,
+                        "javaEnabled"                 => (string) $java_enabled,
+                        "language"                    => (string) $browser_language,
                         "timeZone"                    => (string) $timezone_offset,
                         "3DSecureChallengeWindowSize" => "500_X_600"
-                    ], 
+                    ],
                 ],
                 "extraMerchantData" => $extraMerchantData,
             ]);
@@ -1132,8 +1144,8 @@ function woocommerceUpaymentsInit() {
             curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
             curl_setopt($ch, CURLOPT_USERAGENT, $this->getUserAgent());
             curl_setopt($ch, CURLOPT_HTTPHEADER, [
-                "Authorization: Bearer " . $this->apiKey, 
-                "Accept: application/json", 
+                "Authorization: Bearer " . $this->apiKey,
+                "Accept: application/json",
                 "Content-Type: application/json",
             ]);
 
@@ -1214,12 +1226,12 @@ function woocommerceUpaymentsInit() {
             $template_args = array('gateway' => $this,'save_card_enabled' => ('yes' == $save_card_enabled));
             // Check setting for design toggle
             $use_new_design = ($this->get_option('use_new_design') == 'yes') ? true : false;
-            
-            wc_get_template( 
-                $use_new_design ? 'new-design-form.php' : 'old-design-form.php', 
+
+            wc_get_template(
+                $use_new_design ? 'new-design-form.php' : 'old-design-form.php',
                 $template_args,
-                $this->domain, 
-                untrailingslashit( plugin_dir_path( __FILE__ ) ) . '/templates/' 
+                $this->domain,
+                untrailingslashit( plugin_dir_path( __FILE__ ) ) . '/templates/'
             );
         }
         
@@ -1230,7 +1242,7 @@ function woocommerceUpaymentsInit() {
          */
         public function enqueue_scripts() {
             $plugin_url = plugin_dir_url( __FILE__ );
-            wp_enqueue_style('customer-new-style', $plugin_url . 'assets/css/customer.css', array(), '3.0.0' );
+            wp_enqueue_style('customer-new-style', $plugin_url . 'assets/css/customer.css', array(), '3.0.0');
             // Check if we are on the checkout page AND the gateway is active
             if ( ! is_checkout() || ! $this->is_available() ) {
                 return;
@@ -1255,7 +1267,7 @@ function woocommerceUpaymentsInit() {
                     'isLoggedIn' => is_user_logged_in(),
                     'userId'     => get_current_user_id(),
                 ]);
-            }            
+            }
             
             // Localize data needed by the JavaScript (e.g., API keys, environment settings)
             wp_localize_script( 'your-gateway-core', 'YourGatewayParams', array(
@@ -1268,10 +1280,10 @@ function woocommerceUpaymentsInit() {
          */
         public function admin_enqueue_scripts() {
             $plugin_url = plugin_dir_url( __FILE__ );
-            
+
             // Check if we are on the correct gateway settings page
-            if ( isset( $_GET['page'] ) && $_GET['page'] == 'wc-settings' && isset( $_GET['tab'] ) && $_GET['tab'] == 'checkout' && isset( $_GET['section'] ) && $_GET['section'] == $this->id ) {    
-                
+            if ( isset( $_GET['page'] ) && $_GET['page'] == 'wc-settings' && isset( $_GET['tab'] ) && $_GET['tab'] == 'checkout' && isset( $_GET['section'] ) && $_GET['section'] == $this->id ) {
+
                 wp_enqueue_style('upayments-multimerchant-style',$plugin_url.'assets/css/admin-style.css', [], '3.0.0' );
                 wp_enqueue_script('upayments-multimerchant-repeater',$plugin_url.'assets/js/multimerchant-repeater.js',array('jquery'), '3.0.0',true);
             }
@@ -1285,7 +1297,7 @@ function woocommerceUpaymentsInit() {
                 wp_enqueue_script(
                     'upayments-admin-logic',$plugin_url.'assets/js/admin-settings.js',array( 'jquery' ),'3.0.0',true
                 );
-                
+
                 // Also enqueue a small style block to make the disabled row visually distinct
                 wp_add_inline_style(
                     'woocommerce_admin_styles', '.upayments-disabled-setting { opacity: 0.5; pointer-events: none; }'
@@ -1327,18 +1339,18 @@ function woocommerceUpaymentsInit() {
                 if (!empty($payment_status) || !empty($upayment_id))
                 { ?>
                     <table class="wc-order-totals" style="border-top: 1px solid #999; margin-top:12px; padding-top:12px">
-            <tbody>
+                        <tbody>
                             <tr>
                                 <td class="label"><h3 style="margin:0"><?php echo __("Payment Status", $this->id); ?>:</h3></td>
-                <td width="1%"></td>
-                <td class="total">
+                                <td style="width: 1%;"></td>
+                                <td class="total">
                                     <span class="woocommerce-Price-amount amount"><strong><?php echo $payment_status; ?></strong></span>
                                 </td>
                             </tr>
                             <tr>
-                <td class="label"><h3 style="margin:0"><?php echo __("UPayment ID", $this->id); ?>:</h3></td>
-                <td width="1%"></td>
-                <td class="total">
+                                <td class="label"><h3 style="margin:0"><?php echo __("UPayment ID", $this->id); ?>:</h3></td>
+                                <td style="width: 1%;"></td>
+                                <td class="total">
                                     <span class="woocommerce-Price-amount amount">
                                         <strong>
                                         <?php echo $upayment_id; ?>
@@ -1346,7 +1358,6 @@ function woocommerceUpaymentsInit() {
                                     </span>
                                 </td>
                             </tr>
-                            
                         </tbody>
                     </table>
             <?php
@@ -1485,13 +1496,13 @@ function woocommerceUpaymentsInit() {
 
             $conditions = [
                 'fixed'      => __( 'Fixed', $this->id ),
-                'percentage'       => __( 'Percentage', $this->id ),
+                'percentage' => __( 'Percentage', $this->id ),
             ];
 
             // Pass the repeater HTML to a dedicated function for cleanliness
             ob_start();
             ?>
-            <tr valign="top" class="upayments-multimerchant-repeater">
+            <tr class="upayments-multimerchant-repeater" style="vertical-align: top;">
                 <th scope="row" class="titledesc"><?php echo esc_html( $data['title'] ); ?></th>
                 <td class="forminp forminp-<?php echo esc_attr( sanitize_title( $data['type'] ) ); ?>">
                     <p class="description"><?php echo wp_kses_post( $data['description'] ); ?></p>
@@ -1509,13 +1520,13 @@ function woocommerceUpaymentsInit() {
                             <tbody>
                                 <tr class="">
                                     <td>
-                                        <input type="text" name="woocommerce_upayments_iban_number" data-field="iban_number" value="<?php echo $this->get_option('iban_number'); ?>" placeholder="<?php esc_html_e('KWK00445...', $this->domain); ?>" style="width: 400px;"/>
+                                        <input type="text" name="woocommerce_upayments_iban_number" id="woocommerce_upayments_iban_number" data-field="iban_number" value="<?php echo $this->get_option('iban_number'); ?>" placeholder="<?php esc_html_e('KWK00445...', $this->domain); ?>" style="width: 400px;" aria-label="IBAN Number"/>
                                     </td>
                                     <td>
-                                        <input type="number" name="woocommerce_upayments_knet_charge" data-field="knet_charge" value="<?php echo $this->get_option('knet_charge'); ?>" placeholder="<?php esc_html_e('0.000', $this->domain);?>" min="0.000" max="10.000" step="0.010"/>
+                                        <input type="number" name="woocommerce_upayments_knet_charge" id="woocommerce_upayments_knet_charge" data-field="knet_charge" value="<?php echo $this->get_option('knet_charge'); ?>" placeholder="<?php esc_html_e('0.000', $this->domain);?>" min="0.000" max="10.000" step="0.010" aria-label="Knet Charge"/>
                                     </td>
                                     <td>
-                                        <select data-field="knet_charge_type" name="woocommerce_upayments_knet_charge_type">
+                                        <select data-field="knet_charge_type" name="woocommerce_upayments_knet_charge_type" id="woocommerce_upayments_knet_charge_type" aria-label="Knet Charge Type">
                                             <option value=""><?php esc_html_e( 'Select', $this->domain ); ?></option>
                                             <?php foreach ( $conditions as $val => $label ) : ?>
                                                 <option value="<?php echo esc_attr( $val ); ?>" <?php selected( $val, $this->get_option('knet_charge_type') ); ?>>
@@ -1525,10 +1536,10 @@ function woocommerceUpaymentsInit() {
                                         </select>
                                     </td>
                                     <td>
-                                        <input type="number" name="woocommerce_upayments_cc_charge" data-field="cc_charge" value="<?php echo $this->get_option('cc_charge'); ?>" placeholder="<?php esc_html_e('0.000', $this->domain); ?>" min="0.000" max="10.000" step="0.010"/>
+                                        <input type="number" name="woocommerce_upayments_cc_charge" id="woocommerce_upayments_cc_charge" data-field="cc_charge" value="<?php echo $this->get_option('cc_charge'); ?>" placeholder="<?php esc_html_e('0.000', $this->domain); ?>" min="0.000" max="10.000" step="0.010" aria-label="CC Charge"/>
                                     </td>
                                     <td>
-                                        <select data-field="cc_charge_type" name="woocommerce_upayments_cc_charge_type">
+                                        <select data-field="cc_charge_type" name="woocommerce_upayments_cc_charge_type" id="woocommerce_upayments_cc_charge_type" aria-label="CC Charge Type">
                                             <option value=""><?php esc_html_e( 'Select', $this->domain ); ?></option>
                                             <?php foreach ( $conditions as $val => $label ) : ?>
                                                 <option value="<?php echo esc_attr( $val ); ?>" <?php selected( $val, $this->get_option('cc_charge_type') ); ?>>
@@ -1538,7 +1549,7 @@ function woocommerceUpaymentsInit() {
                                         </select>
                                     </td>
                                 </tr>
-                            </tbody>                           
+                            </tbody>
                         </table>
                     </div>
                     <input type="hidden" name="woocommerce_<?php echo esc_attr( $this->id ); ?>_<?php echo esc_attr( $key ); ?>"  id="<?php echo esc_attr( $key ); ?>" value="<?php echo esc_attr( $settings ); ?>" />
@@ -1582,12 +1593,12 @@ function woocommerceUpaymentsInit() {
             return __("Woocommerce", $this->id);
         }
 
-        public function getIsOrderComplete() {  
-            $flag = true;   
-            if ($this->isOrderComplete == 'no') { 
-                $flag = false;  
-            }   
-            return $flag;   
+        public function getIsOrderComplete() {
+            $flag = true;
+            if ($this->isOrderComplete == 'no') {
+                $flag = false;
+            }
+            return $flag;
         }
 
         public function getMode() {
@@ -1603,6 +1614,7 @@ function woocommerceUpaymentsInit() {
             $url = "https://apiv2api.upayments.com/api/v1/" . $apiRoute;
             if ($this->getMode()) {
                 $url = "https://dev-apiv2api.upayments.com/api/v1/" . $apiRoute;
+                //use below for sandbox
                 // $url = "https://sandboxapi.upayments.com/api/v1/" . $apiRoute;
             }
             return $url;
@@ -1665,19 +1677,19 @@ function woocommerceUpaymentsInit() {
                 $token = $phone;
                 $params = json_encode(["customerUniqueToken" => $token]);
                 $curl = curl_init();
-                curl_setopt_array($curl, 
+                curl_setopt_array($curl,
                 [
-                    CURLOPT_URL => $this->getAPIUrl('create-customer-unique-token') , 
-                    CURLOPT_RETURNTRANSFER => true, 
-                    CURLOPT_USERAGENT => $this->getUserAgent(), 
-                    CURLOPT_ENCODING => "", 
-                    CURLOPT_MAXREDIRS => 10, 
-                    CURLOPT_TIMEOUT => 0, 
-                    CURLOPT_FOLLOWLOCATION => true, 
-                    CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1, 
-                    CURLOPT_CUSTOMREQUEST => "POST", 
-                    CURLOPT_POSTFIELDS => $params, 
-                    CURLOPT_HTTPHEADER => ["Accept: application/json", "Content-Type: application/json", "Authorization: Bearer " . $this->apiKey ], 
+                    CURLOPT_URL => $this->getAPIUrl('create-customer-unique-token') ,
+                    CURLOPT_RETURNTRANSFER => true,
+                    CURLOPT_USERAGENT => $this->getUserAgent(),
+                    CURLOPT_ENCODING => "",
+                    CURLOPT_MAXREDIRS => 10,
+                    CURLOPT_TIMEOUT => 0,
+                    CURLOPT_FOLLOWLOCATION => true,
+                    CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+                    CURLOPT_CUSTOMREQUEST => "POST",
+                    CURLOPT_POSTFIELDS => $params,
+                    CURLOPT_HTTPHEADER => ["Accept: application/json", "Content-Type: application/json", "Authorization: Bearer " . $this->apiKey],
                 ]);
 
                 $response = curl_exec($curl);
@@ -1729,12 +1741,12 @@ function woocommerceUpaymentsInit() {
                             $payment_methods["result"] = 'success';
                         }else{
                             wc_clear_notices();
-                            wc_add_notice(__("UPayments : " . $result["message"] , $this->id) , $notice_type = "error");
+                            wc_add_notice(__("UPayments : " . $result["message"] , $this->id) , "error");
                             return ["result" => "failure", "redirect" => wc_get_checkout_url() , ];
                         }
                     } else {
                         wc_clear_notices();
-                        wc_add_notice(__("Error from UPayments : Please Contact support to whitelist your IP" , $this->id) , $notice_type = "error");
+                        wc_add_notice(__("Error from UPayments : Please Contact support to whitelist your IP" , $this->id) , "error");
                         return ["result" => "failure", "redirect" => wc_get_checkout_url() , ];
                     }
                 }
@@ -1761,7 +1773,7 @@ function woocommerceUpaymentsInit() {
                     CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
                     CURLOPT_CUSTOMREQUEST => "POST",
                     CURLOPT_POSTFIELDS => $params,
-                    CURLOPT_HTTPHEADER => ["Accept: application/json", "Content-Type: application/json", "Authorization: Bearer " . $this->apiKey], 
+                    CURLOPT_HTTPHEADER => ["Accept: application/json", "Content-Type: application/json", "Authorization: Bearer " . $this->apiKey],
                 ]);
 
                 $response = curl_exec($curl);
@@ -1847,15 +1859,53 @@ function woocommerceUpaymentsInit() {
 
             // Format message if an array or object was passed as first parameter
             if (!is_string($message)) {
-                $message = print_r($this->redact_sensitive_data($message), true);
+                $message = print_r($this->redactSensitiveData($message), true);
             }
 
             if ($data !== null) {
-                $safe_data = $this->redact_sensitive_data($data);
+                $safe_data = $this->redactSensitiveData($data);
                 $message  .= ' | Payload: ' . print_r($safe_data, true);
             }
 
             $logger->info($message, $context);
+        }
+
+        /**
+         * Recursively scrub sensitive customer details, tokens, and credentials from log data.
+         *
+         * @param mixed $data
+         * @return mixed
+         */
+        private function redactSensitiveData($data)
+        {
+            if (is_array($data)) {
+                $sensitive_keys = [
+                    'api_key', 'apikey', 'secret', 'password', 'token',
+                    'email', 'phone', 'mobile', 'name', 'customer_name',
+                    'card_number', 'cvv', 'billing_address'
+                ];
+
+                foreach ($data as $key => $value) {
+                    $is_sensitive = false;
+
+                    foreach ($sensitive_keys as $sensitive_key) {
+                        if (stripos((string) $key, $sensitive_key) !== false) {
+                            $is_sensitive = true;
+                            break;
+                        }
+                    }
+
+                    if ($is_sensitive) {
+                        $data[$key] = '***REDACTED***';
+                    } elseif (is_array($value) || is_object($value)) {
+                        $data[$key] = $this->redactSensitiveData((array) $value);
+                    }
+                }
+            } elseif (is_string($data) && isset($this->apiKey) && $data !== '' && $data === $this->apiKey) {
+                return '***REDACTED***';
+            }
+
+            return $data;
         }
         
         /**
@@ -1868,7 +1918,7 @@ function woocommerceUpaymentsInit() {
             // Always load classes (they self-check enable flag)
             require_once __DIR__ . '/includes/Subscription/Checkout/Fields.php';
             require_once __DIR__ . '/includes/Subscription/Manager.php';
-            require_once __DIR__ . '/includes/Subscription/Helpers/Utils.php';            
+            require_once __DIR__ . '/includes/Subscription/Helpers/Utils.php';
             Fields::init();
             Manager::init();
         }
@@ -1945,15 +1995,15 @@ function woocommerceUpaymentsInit() {
                 return;
             }
 
-            $SubscriptionStatus = $order->get_meta('_upay_subscription_status');
-            if($SubscriptionStatus === 'active') {
-                $SubscriptionStatus = '<span class="upay-status-active">'. ucfirst($SubscriptionStatus) .'</span>';
-            } elseif($SubscriptionStatus === 'paused') {
-                $SubscriptionStatus = '<span class="upay-status-paused">'. ucfirst($SubscriptionStatus) .'</span>';
-                } elseif($SubscriptionStatus === 'cancelled') {
-                $SubscriptionStatus = '<span class="upay-status-cancelled">'. ucfirst($SubscriptionStatus) .'</span>';
+            $subscriptionStatus = $order->get_meta('_upay_subscription_status');
+            if($subscriptionStatus === 'active') {
+                $subscriptionStatus = '<span class="upay-status-active">'. ucfirst($subscriptionStatus) .'</span>';
+            } elseif($subscriptionStatus === 'paused') {
+                $subscriptionStatus = '<span class="upay-status-paused">'. ucfirst($subscriptionStatus) .'</span>';
+                } elseif($subscriptionStatus === 'cancelled') {
+                $subscriptionStatus = '<span class="upay-status-cancelled">'. ucfirst($subscriptionStatus) .'</span>';
             } else {
-                $SubscriptionStatus = ucfirst($SubscriptionStatus);
+                $subscriptionStatus = ucfirst($subscriptionStatus);
             }
 
             if (!$plan || $plan === 'one_time') {
@@ -1974,17 +2024,17 @@ function woocommerceUpaymentsInit() {
             echo '<div class="upay-subscription-summary">';
             echo '<h4>' . esc_html__('Subscription Details', $this->id) . '</h4>';
             if($autoDeduction === 'no'){
-                echo '<p><strong>Subscription Status:</strong> ' . wp_kses_post($SubscriptionStatus) . '</p>';
+                echo '<p><strong>Subscription Status:</strong> ' . wp_kses_post($subscriptionStatus) . '</p>';
             }
             echo '<p><strong>Plan:</strong> ' . esc_html(ucfirst($plan)) . '</p>';
             echo '<p><strong>Interval:</strong> Every ' . esc_html($interval) . ' ' . esc_html($period) . '(s)</p>';
             if($autoDeduction === 'yes' && empty($last_billed_dt)) {
                 echo '<p><strong>Auto Deduction Order:</strong> Yes</p>';
             } else {
-                if($SubscriptionStatus !== 'cancelled') {
+                if($subscriptionStatus !== 'cancelled') {
                     echo '<p><strong>Next Billing Date:</strong> ' . esc_html($next_billing_dt->format('Y-m-d H:i:s')) . '</p>';
                 }
-                if(!empty($last_billed_dt)){ 
+                if(!empty($last_billed_dt)){
                     echo '<p><strong>Last Billed at:</strong> ' . esc_html($last_billed_dt->format('Y-m-d H:i:s')) . '</p>';
                 }
             }
@@ -2001,12 +2051,8 @@ function woocommerceUpaymentsInit() {
          */
         public function restrictMixedCartProducts($passed, $product_id, $quantity)
         {
-            if (!function_exists('WC') || !WC()->cart) {
-                return $passed;
-            }
-
             $product = wc_get_product($product_id);
-            if (!$product) {
+            if (!function_exists('WC') || !WC()->cart || !$product) {
                 return $passed;
             }
 
@@ -2063,8 +2109,10 @@ function woocommerceUpaymentsInit() {
         function($order) {
             foreach ($order->get_items('line_item') as $item)
             {
-                $product = $item->get_product();
-                if($product->get_type() === 'custom_type'){
+                $product = is_object($item) && method_exists($item, 'get_product')
+                    ? $item->get_product()
+                    : (is_array($item) ? $order->get_product_from_item($item) : false);
+                if ($product && is_object($product) && method_exists($product, 'get_type') && $product->get_type() === 'custom_type') {
                     $gateway = new WC_Upayments();
                     $gateway->render_subscription_summary($order);
                 }
@@ -2210,8 +2258,6 @@ add_action( 'init', function () {
             }
         }
     }
-    add_action('wp_ajax_upayments_get_payment_status', [$this, 'get_payment_status']);
-    add_action('wp_ajax_nopriv_upayments_get_payment_status', [$this, 'get_payment_status']);
 });
 
 add_filter( 'product_type_selector', 'addCustomProductType' );
@@ -2621,8 +2667,8 @@ function runCustomCron() {
 /**
  * Output hidden device profiling fields on the checkout page.
  */
-add_action('woocommerce_after_order_notes', 'upayments_add_device_fields');
-function upayments_add_device_fields() {
+add_action('woocommerce_after_order_notes', 'upaymentsAddDeviceFields');
+function upaymentsAddDeviceFields() {
     ?>
     <input type="hidden" name="upay_screen_width" id="upay_screen_width" value="" />
     <input type="hidden" name="upay_screen_height" id="upay_screen_height" value="" />
