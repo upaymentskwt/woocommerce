@@ -1,57 +1,74 @@
 jQuery(function ($) {
+    if (typeof upaymentsData === 'undefined') {
+        return;
+    }
 
     let is_status_received = false;
+    let pollCount = 0;
+    const maxPolls = 30; // Stop polling after 60 seconds (30 * 2000ms)
 
     $('.upayment-status-holder').insertAfter('.woocommerce-order-overview__payment-method');
     $('.upayment-id-holder').insertAfter('.woocommerce-order-overview__payment-status');
 
-    $('.entry-header .entry-title').text(upaymentsData.i18n_order_status);
-    $('.woocommerce-thankyou-order-received').hide();
-    $('.woocommerce-thankyou-order-details').hide();
-    $('.woocommerce-order-details').hide();
-    $('.woocommerce-customer-details').hide();
+    if (upaymentsData.i18n_order_status) {
+        $('.entry-header .entry-title').text(upaymentsData.i18n_order_status);
+    }
 
-    show_upayments_status();
+    $('.woocommerce-thankyou-order-received, .woocommerce-thankyou-order-details, .woocommerce-order-details, .woocommerce-customer-details').hide();
 
-    function show_upayments_status(type = '') {
+    function show_upayments_status(type) {
         $('.payment-panel-wait').hide();
-        $('.woocommerce-order-details').show();
-        $('.woocommerce-customer-details').show();
+        $('.woocommerce-order-details, .woocommerce-customer-details').show();
 
-        if (type.length > 0) {
+        if (type && type.length > 0) {
             $('.payment-panel-' + type).show();
         }
     }
 
-    check_upayments_payment_status();
-
     function check_upayments_payment_status() {
-        function upayments_status_loop() {
-            if (is_status_received) {
+        if (is_status_received || pollCount >= maxPolls) {
+            return;
+        }
+
+        pollCount++;
+
+        $.getJSON(upaymentsData.ajax_url, {
+            action: 'upayments_get_payment_status',
+            security: upaymentsData.nonce,
+            order_id: upaymentsData.order_id,
+            order_key: upaymentsData.order_key
+        })
+        .done(function (response) {
+            if (!response.success) {
+                show_upayments_status('error');
+                is_status_received = true;
                 return;
             }
 
-            if (typeof(upayments_status_ajax_url) !== "undefined") {
-                jQuery.getJSON(upayments_status_ajax_url, {'order_id' : '<?php echo $order_id; ?>'}, function (data) {
-                    if (data.status == 'wait') {-
-                    setTimeout(upayments_status_loop, 2000);
-                    } else if (data.status == 'error') {
-                    show_upayments_status('error');
-                    is_status_received = true;
-                    } else if (data.status == 'pending') {
-                    show_upayments_status('pending');
-                    is_status_received = true;
-                    } else if (data.status == 'failed') {
-                    show_upayments_status('failed');
-                    is_status_received = true;
-                    } else if (data.status == 'completed') {
-                    show_upayments_status('completed');
-                    is_status_received = true;
-                    }
-            });
+            const status = response.data.status;
+
+            if (status === 'wait' || status === 'pending') {
+                setTimeout(check_upayments_payment_status, 2000);
+            } else if (status === 'completed') {
+                show_upayments_status('completed');
+                is_status_received = true;
+                window.location.reload(); // Refresh to show native WooCommerce completed details
+            } else if (status === 'failed') {
+                show_upayments_status('failed');
+                is_status_received = true;
+            } else {
+                show_upayments_status('error');
+                is_status_received = true;
             }
-        }
-        upayments_status_loop();
+        })
+        .fail(function () {
+            if (pollCount < maxPolls) {
+                setTimeout(check_upayments_payment_status, 3000);
+            } else {
+                show_upayments_status('error');
+            }
+        });
     }
 
+    check_upayments_payment_status();
 });

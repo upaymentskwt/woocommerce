@@ -3,7 +3,7 @@
  * Plugin Name: UPayments
  * Plugin URI: https://developers.upayments.com/reference/woocommerce
  * Description: UPayments Plugin with Unified payment gateway supporting Old/New design, Save Card, and Multimerchant. Supports Block Checkout, Auto Deduction for Subscriptions, Bookable Products.
- * Version: 3.1.1
+ * Version: 3.1.2
  * Author: <a href="https://developers.upayments.com/reference/woocommerce" target="_blank">UPayments Company</a>
  * Author URI: https://developers.upayments.com/reference/woocommerce
  * Requires at least: 5.6
@@ -26,17 +26,21 @@ require_once __DIR__ . '/vendor/plugin-update-checker/plugin-update-checker.php'
 
 use UPayments\Subscription\Cron\Scheduler;
 use UPayments\Subscription\Checkout\Fields;
+use UPayments\Subscription\Helpers\Utils;
 use UPayments\Subscription\Manager;
 use YahnisElsts\PluginUpdateChecker\v5\PucFactory;
 
 $updateChecker = PucFactory::buildUpdateChecker(
     'https://github.com/upaymentskwt/woocommerce',
     __FILE__,
-    'upayments-V2.2.1'
+    'woocommerce-upayments'
 );
 
-// Optional: use releases instead of tags
-$updateChecker->getVcsApi()->enableReleaseAssets();
+$vcsApi = $updateChecker->getVcsApi();
+
+if ( is_object( $vcsApi ) && method_exists( $vcsApi, 'enableReleaseAssets' ) ) {
+    $vcsApi->enableReleaseAssets();
+}
 
 add_action( 'plugins_loaded', 'woocommerceUpaymentsInit' );
 function woocommerceUpaymentsInit() {
@@ -45,6 +49,7 @@ function woocommerceUpaymentsInit() {
         return;
     }
     class WC_Upayments extends WC_Payment_Gateway {
+        public $id;
         public $domain;
         public $debug;
         public $apiKey;
@@ -62,14 +67,15 @@ function woocommerceUpaymentsInit() {
         public $saveCardEnabled;
         public $charge;
         public $autoDeduction;
+        public const DISPLAY_NONE = 'display:none;';
+        public const PHONE_CLEAN_REGEX = '/[^A-Za-z0-9\-]/';
 
         public function __construct() {
             // Define ID, title, description, and settings.
             $this->id                 = 'upayments';
             $this->icon = UP_PLUGIN_URL . "assets/images/logo.png";
-            $this->method_title       = __("UPayments", $this->domain);
-            $this->method_description = __("UPayments Plugin allows merchants to accept KNET, Cards, Samsung Pay, Apple Pay, Google Pay Payments. 
-            Supports Block Checkout, Auto Deduction for Subscriptions.", $this->domain);
+            $this->method_title       = __("UPayments", $this->id);
+            $this->method_description = __("UPayments Plugin allows merchants to accept KNET, Cards, Samsung Pay, Apple Pay, Google Pay Payments. Supports Block Checkout, Auto Deduction for Subscriptions.", $this->id);
             $this->has_fields         = true; // Required for custom forms like Save Card/Design variations.
 
             // Define user set variables
@@ -108,11 +114,12 @@ function woocommerceUpaymentsInit() {
             add_action("admin_footer", [$this, "UPayments_admin_footer"], 10, 3);
             add_action("admin_enqueue_scripts", [$this, "admin_enqueue_scripts"]);
             add_action('wp_enqueue_scripts', [$this, 'enqueue_scripts']);
+            add_action('woocommerce_enqueue_thankyou_scripts', [$this, 'enqueue_thankyou_scripts']);
             
             // Handlers to Display Thankyou Page after successful payment
-            add_action("woocommerce_thankyou_" . $this->id, function ($order_id) {
-                $this->thankyou_page($order_id);
-            });
+            // add_action("woocommerce_thankyou_" . $this->id, function ($order_id) {
+            //     $this->thankyou_page($order_id);
+            // });
             
             // Handlers for Subscription Module
             $this->initializeSubscriptionModule();
@@ -128,7 +135,7 @@ function woocommerceUpaymentsInit() {
 
                 echo '<div class="checkout-my-account-link">';
                 echo '<a href="' . esc_url($account_url) . '" target="_blank">';
-                echo __('Go to My Account', 'woocommerce');
+                echo __('Go to My Account', $this->id);
                 echo '</a>';
                 echo '</div>';
                 
@@ -166,7 +173,7 @@ function woocommerceUpaymentsInit() {
                 $fields['billing']['billing_phone']['required'] = true;
 
                 // Optional: update label to show *
-                $fields['billing']['billing_phone']['label'] = __('Phone', 'woocommerce');
+                $fields['billing']['billing_phone']['label'] = __('Phone', $this->id);
 
                 return $fields;
             });
@@ -177,14 +184,14 @@ function woocommerceUpaymentsInit() {
             });
 
             // Validation for phone number on account details page to ensure Save Card functionality works smoothly
-            add_action('woocommerce_save_account_details_errors', function ($errors, $user) {
+            add_action('woocommerce_save_account_details_errors', function ($errors) {
                 if (empty($_POST['billing_phone'])) {
                     $errors->add(
                         'billing_phone_error',
                         __('Billing phone number is required.', 'woocommerce')
                     );
                 }
-                if (!empty($_POST['billing_phone']) && !preg_match('/^\+?[0-9]{8,15}$/', $_POST['billing_phone'])) {
+                if (!empty($_POST['billing_phone']) && !preg_match('/^\+?\d{8,15}$/', $_POST['billing_phone'])) {
                     $errors->add(
                         'billing_phone_invalid',
                         __('Please enter a valid phone number.', 'woocommerce')
@@ -208,141 +215,128 @@ function woocommerceUpaymentsInit() {
 
             add_filter('woocommerce_add_to_cart_validation', [$this, 'restrictMixedCartProducts'], 10, 3);
             add_action('woocommerce_before_shop_loop_item_title', [$this, 'renderSubscriptionBadgeInProductList'], 9);
+            add_action('wp_ajax_upayments_get_payment_status', [$this, 'get_payment_status']);
+            add_action('wp_ajax_nopriv_upayments_get_payment_status', [$this, 'get_payment_status']);
         }
 
         public function init_form_fields() {
             $this->form_fields = array(
                 "enabled" => array(
-                    "title" => __("Active", $this->domain) , 
-                    "type" => "checkbox", 
-                    "label" => __(" ", $this->domain) , 
+                    "title" => __("Active", $this->id),
+                    "type" => "checkbox",
+                    "label" => __(" ", $this->id),
                     "default" => "yes"
-                ), 
+                ),
                 'make_default_gateway' => [
-                    'title'       => __('Default Gateway', $this->domain),
+                    'title'       => __('Default Gateway', $this->id),
                     'type'        => 'checkbox',
-                    'label'       => __('Make UPayments the default payment method at checkout', $this->domain),
+                    'label'       => __('Make UPayments the default payment method at checkout', $this->id),
                     'default'     => 'no',
-                    'description' => __('If enabled, UPayments will be preselected at checkout. Merchants can still reorder gateways.', $this->domain),
+                    'description' => __('If enabled, UPayments will be preselected at checkout. Merchants can still reorder gateways.', $this->id),
                 ],
                 "title" => array(
-                    "title" => __("Title", $this->domain) , 
-                    "type" => "text", 
-                    "description" => __("This controls the title which the user sees during checkout.", $this->domain) , 
-                    "default" => $this->method_title, 
+                    "title" => __("Title", $this->id),
+                    "type" => "text",
+                    "description" => __("This controls the title which the user sees during checkout.", $this->id),
+                    "default" => $this->method_title,
                     "desc_tip" => true
-                ), 
+                ),
                 "description" => array(
-                    "title" => __("Description", $this->domain) , 
-                    "type" => "textarea", 
-                    "description" => __("Instructions that the customer will see on your checkout.", $this->domain),
-                    "default" => $this->method_description, 
+                    "title" => __("Description", $this->id),
+                    "type" => "textarea",
+                    "description" => __("Instructions that the customer will see on your checkout.", $this->id),
+                    "default" => $this->method_description,
                     "desc_tip" => true
                 ),
                 "api_key" => array(
-                    "title" => __("Api Key", $this->domain) , 
-                    "type" => "text", 
-                    "description" => __("Copy/paste values from UPayments dashboard", $this->domain), 
-                    "default" => "", 
+                    "title" => __("Api Key", $this->id),
+                    "type" => "text",
+                    "description" => __("Copy/paste values from UPayments dashboard", $this->id),
+                    "default" => "",
                     "desc_tip" => true
                 ),
                 "debug" => array(
-                    "title" => __("Debug", $this->domain),
+                    "title" => __("Debug", $this->id),
                     "type" => "checkbox",
-                    "label" => __(" ", $this->domain),
-                    "default" => "no"
-                ), 
+                    "label" => __(" ", $this->id),
+                    "default" => "no",
+                    "disabled" => false,
+                ),
                 "test_mode" => array(
-                    "title" => __("Test Mode", $this->domain),
+                    "title" => __("Test Mode", $this->id),
                     "type" => "checkbox",
-                    "label" => __(" ", $this->domain),
+                    "label" => __(" ", $this->id),
                     "default" => "no"
-                ), 
-                "is_order_complete" => array(   
-                    "title" => __('Show paid orders as "Completed"?', $this->domain),   
-                    "type" => "checkbox",   
-                    "label" => __(" ", $this->domain),  
-                    "default" => "yes"  
+                ),
+                "is_order_complete" => array(
+                    "title" => __('Show paid orders as "Completed"?', $this->id),
+                    "type" => "checkbox",
+                    "label" => __(" ", $this->id),
+                    "default" => "yes"
                 ),
                 'save_card_section_title' => array(
-                    'title' => __( 'Card Tokenization & Design', $this->domain ),
+                    'title' => __( 'Card Tokenization & Design', $this->id ),
                     'type'  => 'title',
                     'description' => '',
                 ),
                 'use_new_design' => array(
-                    'title'   => __( 'Use New Design', $this->domain ),
+                    'title'   => __( 'Use New Design', $this->id ),
                     'type'    => 'checkbox',
-                    'label'   => __( 'Use the modern design (if unchecked uses classic design)', $this->domain ),
+                    'label'   => __( 'Use the modern design (if unchecked uses classic design)', $this->id ),
                     'default' => 'yes', // Default to New Design
                 ),
                 'enable_save_card' => array(
-                    'title'   => __( 'Enable Save Card', $this->domain ),
+                    'title'   => __( 'Enable Save Card', $this->id ),
                     'type'    => 'checkbox',
-                    'label'   => __( 'Allow customers to save card details (Tokenization)', $this->domain ),
+                    'label'   => __( 'Allow customers to save card details (Tokenization)', $this->id ),
                     'default' => 'yes', // Default to Enabled (per V2.2.1)
                 ),
-                // 'checkout_blocks_title' => array(
-                //     'title' => __( 'WooCommerce Block Checkout', $this->domain ),
-                //     'type'  => 'title',
-                // ),
-                // 'enable_block_checkout' => array(
-                //     'title'   => __( 'Enable Block Checkout', $this->domain ),
-                //     'type'    => 'text',
-                //     'description'   => __( 'Enable compatibility with the new WooCommerce Checkout Block', $this->domain ),
-                // ),
-                //disabled block setting for now.
-                // 'enable_block_checkout' => array(
-                //     'title'   => __( 'Enable Block Checkout', $this->domain ),
-                //     'type'    => 'checkbox',
-                //     'label'   => __( 'Enable compatibility with the new WooCommerce Checkout Block', $this->domain ),
-                //     'default' => 'yes',
-                // ),
                 'multimerchant_section_title' => array(
-                    'title' => __( 'Multimerchant Configuration', $this->domain ),
+                    'title' => __( 'Multimerchant Configuration', $this->id ),
                     'type'  => 'title',
                 ),
                 'enable_multimerchant' => array(
-                    'title'   => __( 'Enable Multimerchant', $this->domain ),
+                    'title'   => __( 'Enable Multimerchant', $this->id ),
                     'type'    => 'checkbox',
-                    'label'   => __( 'Handle Merchant Account & Charges', $this->domain ),
+                    'label'   => __( 'Handle Merchant Account & Charges', $this->id ),
                     'default' => 'no',
                 ),
                 'iban_number' => array(
                     'type' => 'text',
-                    'css'  => 'display:none;',
+                    'css'  => self::DISPLAY_NONE,
                 ),
                 'cc_charge' => array(
                     'type' => 'text',
-                    'css'  => 'display:none;',
+                    'css'  => self::DISPLAY_NONE,
                 ),
                 'cc_charge_type' => array(
                     'type' => 'text',
-                    'css'  => 'display:none;',
+                    'css'  => self::DISPLAY_NONE,
                 ),
                 'knet_charge' => array(
                     'type' => 'text',
-                    'css'  => 'display:none;',
+                    'css'  => self::DISPLAY_NONE,
                 ),
                 'knet_charge_type' => array(
                     'type' => 'text',
-                    'css'  => 'display:none;',
+                    'css'  => self::DISPLAY_NONE,
                 ),
                 'multimerchant_accounts' => array(
-                    'title'       => __( 'Multimerchant Accounts', $this->domain ),
+                    'title'       => __( 'Multimerchant Accounts', $this->id ),
                     'type'        => 'multimerchant_repeater',
-                    'description' => __( 'Manage IBAN and charges for Main-Merchant.', $this->domain ),
+                    'description' => __( 'Manage IBAN and charges for Main-Merchant.', $this->id ),
                 ),
                 'autodeduction_section_title' => array(
-                    'title' => __( 'Subscription Configuration', $this->domain ),
+                    'title' => __( 'Subscription Configuration', $this->id ),
                     'type'  => 'title',
                 ),
                 'enable_subscriptions' => array(
-                    'title'   => __( 'Enable Subscriptions', $this->domain ),
+                    'title'   => __( 'Enable Subscriptions', $this->id ),
                     'type'    => 'checkbox',
-                    'label'   => __( 'Enable subscription payments', $this->domain ),
+                    'label'   => __( 'Enable subscription payments', $this->id ),
                     'default' => 'no',
                     "desc_tip" => true,
-                    "description" => __( "Only Subscription Products are allowed at checkout If Subscription is enabled.", $this->domain ),
+                    "description" => __( "Only Subscription Products are allowed at checkout If Subscription is enabled.", $this->id ),
                 ),
             );
         }
@@ -362,7 +356,7 @@ function woocommerceUpaymentsInit() {
                 
                 if ($billing_phone) {
                     $phone = str_replace(' ', '', $billing_phone); // Replaces all spaces with hyphens.
-                    $phone = preg_replace('/[^A-Za-z0-9\-]/','',$phone);
+                    $phone = preg_replace(self::PHONE_CLEAN_REGEX, '', $phone);
                     if (substr($phone, 0, 1) === '0') {
                         $phone = '1' . substr($phone, 1);
                     }
@@ -377,7 +371,7 @@ function woocommerceUpaymentsInit() {
                 
                 if (!empty($billing_phone)) {
                     $phone = str_replace(' ', '', $billing_phone); // Replaces all spaces with hyphens.
-                    $phone = preg_replace('/[^A-Za-z0-9\-]/','',$phone);
+                    $phone = preg_replace(self::PHONE_CLEAN_REGEX, '', $phone);
                     if (substr($phone, 0, 1) === '0') {
                         $phone = '1' . substr($phone, 1);
                     }
@@ -424,6 +418,7 @@ function woocommerceUpaymentsInit() {
             $upayment_id    = $order->get_meta('UPayments_PaymentID');
 
             $style = "width: 100%;  margin-bottom: 1rem; background: #212B5F; padding: 20px; color: #fff; font-size: 22px;";
+            $status = '';
             if (isset($_GET["status"])){
                 $status = sanitize_text_field($_GET["status"]);
                 if ($status == "canceled"){
@@ -431,8 +426,8 @@ function woocommerceUpaymentsInit() {
                     if ($status == "processing"){
                         $status = "completed";
                     }else{
-                        $reference = sanitize_text_field($_GET["reference"]);
-                        $status_message = __("Order cancelled by UPayments.", $this->domain) . ($reference ? " Reference: " . $reference : "");
+                        $reference = isset($_GET["reference"]) ? sanitize_text_field($_GET["reference"]) : '';
+                        $status_message = __("Order cancelled by UPayments.", $this->id) . ($reference ? " Reference: " . $reference : "");
                         $order->update_status("cancelled", $status_message);
                         $order->add_meta_data("UPayments_reference", $reference);
                         $order->save_meta_data();
@@ -460,7 +455,8 @@ function woocommerceUpaymentsInit() {
                 </style>
                 <div class="payment-panel-wait">
                     <h3><?php esc_html_e("We are retrieving your payment status from UPayments, please wait...", $this->domain); ?></h3>
-                    <div class="img-container"><img src="<?php echo UP_PLUGIN_PATH; ?>assets/images/loader.gif" /></div>
+                    <div class="img-container"><img src="<?php echo UP_PLUGIN_PATH; ?>assets/images/loader.gif" alt="loader"/>
+                    </div>
                 </div>
             <?php
             } 
@@ -516,267 +512,338 @@ function woocommerceUpaymentsInit() {
         <?php
         }
 
-        public function get_payment_staus()
+        /**
+         * Return JSON status for an order securely.
+         */
+        public function get_payment_status()
         {
-            $status = "wait";
-            $message = "";
+            check_ajax_referer('upayments_order_status_nonce', 'security');
 
-            try{
-                $order_id = (int)sanitize_text_field($_GET["wc_order_id"]);
-                if ($order_id == 0)
-                {
-                    throw new \Exception(__("Order not found.", $this->domain));
-                }
+            $order_id  = isset($_GET['order_id']) ? absint($_GET['order_id']) : 0;
+            $order_key = isset($_GET['order_key']) ? sanitize_text_field(wp_unslash($_GET['order_key'])) : '';
 
-                $payment_status = get_post_meta($order_id, "UPayments_WHS", true);
-                if ($payment_status && !empty($payment_status))
-                {
-                    $status = $payment_status;
-                }
-            }catch(\Exception $e){
-                $status = "error";
-                $message = $e->getMessage();
+            if (!$order_id || empty($order_key)) {
+                wp_send_json_error(['message' => __('Invalid request parameters.', $this->id)], 400);
             }
-            $this->log($status);
-            $data = ["status" => $status, "message" => $message, ];
 
-            echo json_encode($data);
-            die();
+            $order = wc_get_order($order_id);
+
+            // Verify order exists and order_key matches
+            if (!$order || !hash_equals($order->get_order_key(), $order_key)) {
+                wp_send_json_error(['message' => __('Order access denied.', $this->id)], 403);
+            }
+
+            // Determine current order payment status
+            $status = 'wait';
+            $payment_status = $order->get_meta('UPayments_WHS');
+
+            if ($order->is_paid()) {
+                $status = 'completed';
+            } elseif ($order->has_status('failed') || $payment_status === 'failed') {
+                $status = 'failed';
+            } elseif ($payment_status) {
+                $status = sanitize_text_field($payment_status);
+            }
+
+            wp_send_json_success(['status' => $status]);
         }
 
         public function return_from_upayments()
         {
-            if (!isset($_GET["wc_order_id"])){
-                $status_message = __("No shop reference received from UPayments.", $this->domain);
-                $this->log($status_message);
-                wp_redirect(add_query_arg("suspected", "true", wc_get_checkout_url()));
-                exit();
-            }else{
-                $this->log("Ret Order Id Received: " . $_GET["wc_order_id"]);
-            }
-
-            $order_id = sanitize_text_field($_GET["wc_order_id"]);
-            $PaymentID = "";
-            $pos = strpos($order_id, "?payment_id");
-            if ($pos !== false){
-                $PaymentID = substr($order_id, $pos + strlen("?payment_id") + 1);
-                $order_id = (int)substr($order_id, 0, $pos);
-            }
-
-            $order = new WC_Order($order_id);
-
-            if (isset($_GET["result"])){
-                $this->log("Ret Order Result set.");
-                $OrderID = sanitize_text_field($_GET["requested_order_id"]);
-                $UPayments_order_id = get_post_meta($order_id, "UPayments_order_id", true)  ? get_post_meta($order_id, "UPayments_order_id", true) : $order->get_meta('UPayments_order_id');
-                $this->log("Ret Upayments Order Id Received: " . $UPayments_order_id);
-                if ($OrderID != $UPayments_order_id){
-                    $status_message = __("Ret Order references does not match.", $this->domain);
-                    $this->log($status_message);
-                    $order->update_status("failed", $status_message, $this->domain);
-                    wp_redirect(add_query_arg("suspected", "true", wc_get_checkout_url()));
+            try {
+                // 1. Validate order ID from GET parameter
+                $raw_order_id = isset($_GET['wc_order_id']) ? sanitize_text_field(wp_unslash($_GET['wc_order_id'])) : '';
+                if (empty($raw_order_id)) {
+                    $this->log('Return URL Error: No shop reference received.');
+                    wp_safe_redirect(add_query_arg('suspected', 'true', wc_get_checkout_url()));
                     exit();
-                }else{
-                    $this->log("Ret Order references matched.");
-                    $status = sanitize_text_field($_GET["result"]);
-                    
-                    if (isset($_GET["payment_id"])){
-                        $PaymentID = sanitize_text_field($_GET["payment_id"]);
+                }
+
+                // Clean up possible appended payment_id query strings
+                $pos = strpos($raw_order_id, '?payment_id');
+                $order_id = ($pos !== false) ? absint(substr($raw_order_id, 0, $pos)) : absint($raw_order_id);
+
+                if (!$order_id) {
+                    $this->log('Return URL Error: Invalid order ID.');
+                    wp_safe_redirect(add_query_arg('suspected', 'true', wc_get_checkout_url()));
+                    exit();
+                }
+
+                // 2. Safely retrieve the WC_Order instance
+                $order = wc_get_order($order_id);
+                if (!$order) {
+                    $this->log("Return URL Error: Order #{$order_id} not found.");
+                    wp_safe_redirect(add_query_arg('suspected', 'true', wc_get_checkout_url()));
+                    exit();
+                }
+
+                // 3. Extract transaction info safely
+                $payment_id = isset($_GET['payment_id']) ? sanitize_text_field(wp_unslash($_GET['payment_id'])) : '';
+                $track_id   = isset($_GET['track_id'])   ? sanitize_text_field(wp_unslash($_GET['track_id']))   : '';
+                $raw_status = isset($_GET['result'])     ? strtoupper(sanitize_text_field(wp_unslash($_GET['result']))) : '';
+
+                // 4. If order is already processed/paid (e.g. by Webhook), redirect straight to Thank You page
+                if ($order->is_paid()) {
+                    if (function_exists('WC') && WC()->cart) {
+                        WC()->cart->empty_cart();
                     }
+                    wp_safe_redirect($this->get_return_url($order));
+                    exit();
+                }
 
-                    $TrackID = sanitize_text_field($_GET["track_id"]);
-
-                    $payment_type = "";
-
-                    if (isset($_GET["payment_type"])){
-                        $payment_type = sanitize_text_field($_GET["payment_type"]);
-                    }
-
-                    $PostDate = sanitize_text_field($_GET["post_date"]);
-                    $TranID = sanitize_text_field($_GET["tran_id"]);
-                    $Ref = sanitize_text_field($_GET["ref"]);
-                    $Auth = sanitize_text_field($_GET["auth"]);
-
-                    $order->delete_meta_data("UPayments_Result");
-
-                    if (!empty($PaymentID)){
-                        $order->delete_meta_data("UPayments_PaymentID");
-                    }
-
-                    $order->delete_meta_data("UPayments_TrackID");
-                    $order->delete_meta_data("UPayments_payment_type");
-                    $order->delete_meta_data("UPayments_PostDate");
-                    $order->delete_meta_data("UPayments_TranID");
-                    $order->delete_meta_data("UPayments_Ref");
-                    $order->delete_meta_data("UPayments_Auth");
-                    $order->delete_meta_data("_payment_method_title");
-
-                    $order->add_meta_data("UPayments_Result", $status);
-
-                    if (!empty($PaymentID)){
-                        $order->add_meta_data("UPayments_PaymentID", $PaymentID);
-                    }
-
-                    $order->add_meta_data("UPayments_TrackID", $TrackID);
-                    $order->add_meta_data("UPayments_payment_type", $payment_type);
-                    $order->add_meta_data("UPayments_PostDate", $PostDate);
-                    $order->add_meta_data("UPayments_TranID", $TranID);
-                    $order->add_meta_data("UPayments_Ref", $Ref);
-                    $order->add_meta_data("UPayments_Auth", $Auth);
-                    $order->add_meta_data("_payment_method_title", 'UPayments');
-
-                    $order->save_meta_data();
-
-                    if ($status == "CANCELED" || $status == "CANCELLED"){
-                        $status_message = __("Received canceled response from UPayments.", $this->domain) . ($PaymentID ? " PaymentID: " . $PaymentID : "");
-                        $this->log("Ret Order Cancel Status: " . $status_message);
-                        $order->update_status("cancelled", $status_message);
-                        wp_redirect(add_query_arg("cancelled", "true", wc_get_checkout_url()));
-                        exit();
-                    }elseif ($status == "ERROR" || $status == "NOT CAPTURED" || $status == null || $status == "FAILURE"){
-                        $status_message = __("Received error response from UPayments.", $this->domain) . ($PaymentID ? " PaymentID: " . $PaymentID : "");
-                        $this->log("Ret Order Error Status: " . $status_message);
-                        $order->update_status("failed", $status_message, $this->domain);
-                        wp_redirect(add_query_arg("failed", "true", wc_get_checkout_url()));
-                        exit();
-                    }elseif ($status == "CAPTURED" || $status == "SUCCESS"){
-                        $this->log("Ret Order CAPTURED Status");
-
-                        $paid_order_status = 'processing';
-                        if ($order->get_status() == 'completed' || $this->getIsOrderComplete()) {
-                            $paid_order_status = 'completed';
-                        }
-
-                        global $woocommerce;
-
-                        $order->update_status($paid_order_status, __('Payment successful with UPayments. PaymentID: '.$PaymentID, $this->domain));
-                        $woocommerce->cart->empty_cart();
-                        wp_redirect(add_query_arg("status", $status, $this->get_return_url($order)));
-                        exit();
+                // 5. If Webhook hasn't completed it yet and a payment_id is present, verify via API
+                if (!empty($payment_id) && method_exists($this, 'verifyTransactionWithApi')) {
+                    $verified_data = $this->verifyTransactionWithApi($payment_id, $track_id, $order);
+                    if ($verified_data && !empty($verified_data['status'])) {
+                        $raw_status = strtoupper($verified_data['status']);
                     }
                 }
-            }else{
-                $this->log("Ret Order Result not set.");
+
+                // 6. Handle redirect flow based on verified status
+                if ($raw_status === 'CAPTURED' || $raw_status === 'SUCCESS') {
+                    if (function_exists('WC') && WC()->cart) {
+                        WC()->cart->empty_cart();
+                    }
+                    wp_safe_redirect($this->get_return_url($order));
+                    exit();
+                }
+
+                if (in_array($raw_status, ['CANCELED', 'CANCELLED'], true)) {
+                    $order->update_status('cancelled', sprintf(__('Customer cancelled payment at gateway. PaymentID: %s', $this->id), $payment_id));
+                    wp_safe_redirect(add_query_arg('cancelled', 'true', wc_get_checkout_url()));
+                    exit();
+                }
+
+                // Default failure redirect for any other outcome
+                $this->log("Return URL payment failed or pending. Status: {$raw_status}");
+                $order->update_status('failed', sprintf(__('Payment failed or incomplete. Status: %s', $this->id), $raw_status));
+                wp_safe_redirect(add_query_arg('failed', 'true', wc_get_checkout_url()));
+                exit();
+
+            } catch (\Throwable $e) {
+                $this->log('Fatal error caught in return_from_upayments: ' . $e->getMessage());
+                wp_safe_redirect(add_query_arg('failed', 'true', wc_get_checkout_url()));
+                exit();
             }
         }
 
+        /**
+         * Handles incoming UPayments payment webhook notifications.
+         * 
+         * Verifies transaction state against UPayments REST API directly 
+         * to ensure amount, currency, and payment status authenticity.
+         */
         public function web_hook_handler()
         {
-            global $woocommerce;
-            $this->log("Webhook Triggers");
-            $this->log($_REQUEST);
-
-            if (!isset($_REQUEST["wc_order_id"])){
-                $status_message = __("No shop reference received from UPayments.", $this->domain);
-                $this->log($status_message);
-                exit();
-            }else{
-                $this->log("Order Id Received: " . $_REQUEST["wc_order_id"]);
+            // 1. Enforce POST requests to block URL/browser bar manipulation
+            if (isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] !== 'POST') {
+                $this->log("Webhook rejected: Invalid request method " . $_SERVER['REQUEST_METHOD']);
+                status_header(405);
+                exit('Method Not Allowed');
             }
 
-            $order_id = (int)sanitize_text_field($_REQUEST["wc_order_id"]);
-            $pos = strpos($order_id, "?PaymentID");
-            if ($pos !== false){
-                $order_id = (int)substr($order_id, 0, $pos);
+            // 2. Safely extract wc_order_id (from URL query string or POST payload)
+            $order_id = 0;
+            if (isset($_GET['wc_order_id'])) {
+                $order_id = absint($_GET['wc_order_id']);
+            } elseif (isset($_POST['wc_order_id'])) {
+                $order_id = absint($_POST['wc_order_id']);
             }
 
-            if ($order_id > 0){
-                $UPayments_webhook_triggered = (int)get_post_meta($order_id, "UPayments_webhook_triggered", true);
-                if ($UPayments_webhook_triggered == 1){
-                    $this->log($order_id . " => UPayments_webhook_triggered set");
-                    exit();
-                }else{
-                    $this->log($order_id . " => UPayments_webhook_triggered Not set");
+            if (!$order_id) {
+                $this->log("Webhook rejected: Missing or invalid wc_order_id.");
+                status_header(400);
+                exit('Bad Request');
+            }
+
+            $order = wc_get_order($order_id);
+            if (!$order instanceof \WC_Order) {
+                $this->log("Webhook rejected: Order #{$order_id} not found or invalid.");
+                status_header(404);
+                exit('Order Not Found');
+            }
+
+            // Prevent race conditions and duplicate processing
+            if ($order->is_paid() || (int) $order->get_meta('UPayments_webhook_triggered') === 1) {
+                $this->log("Webhook skipped: Order #{$order_id} has already been processed.");
+                status_header(200);
+                exit('Already Processed');
+            }
+
+            // 3. Extract transaction identifier only from POST payload
+            $payment_id = isset($_POST['payment_id']) ? sanitize_text_field(wp_unslash($_POST['payment_id'])) : '';
+            $track_id   = isset($_POST['track_id'])   ? sanitize_text_field(wp_unslash($_POST['track_id']))   : '';
+
+            if (empty($payment_id) && empty($track_id)) {
+                $this->log("Webhook rejected: Missing payment_id and track_id for Order #{$order_id}");
+                status_header(400);
+                exit('Missing Transaction Reference');
+            }
+
+            try {
+                // 4. Query UPayments API directly (Server-to-Server)
+                $verified_data = $this->verifyTransactionWithApi($payment_id, $track_id, $order);
+
+                if (!$verified_data || empty($verified_data['status'])) {
+                    $this->log("API Verification Failed for Order #{$order_id}");
+                    status_header(400);
+                    exit('Verification Failed');
                 }
-            }else{
-                $this->log("Order Id > 0: " . $order_id);
-            }
 
-            $order = new WC_Order($order_id);
+                $remote_status   = strtoupper($verified_data['status']);
+                $remote_amount   = (float) ($verified_data['amount'] ?? 0);
+                $remote_currency = strtoupper($verified_data['currency'] ?? '');
+                $order_total     = (float) $order->get_total();
+                $order_currency  = strtoupper($order->get_currency());
 
-            try{
-                if (isset($_REQUEST["result"])){
-                    $this->log("Order Result set.");
-                    $OrderID = sanitize_text_field($_REQUEST["requested_order_id"]);
-                    $UPayments_order_id = get_post_meta($order_id, "UPayments_order_id", true)  ? get_post_meta($order_id, "UPayments_order_id", true) : $order->get_meta('UPayments_order_id');
-                    if ($OrderID != $UPayments_order_id)
-                    {
-                        $status_message = __("Order references does not match.", $this->domain);
-                        $this->log($status_message);
-                        exit();
+                // 5. Verify Amount (Epsilon comparison to prevent float precision rounding bugs)
+                if (abs($remote_amount - $order_total) > 0.01) {
+                    $this->log("Amount mismatch for Order #{$order_id}. Expected: {$order_total}, API: {$remote_amount}");
+                    $order->update_status('on-hold', sprintf(
+                        __('Payment verification failed: Amount mismatch (Expected: %s %s, Received: %s %s).', $this->id),
+                        $order_total,
+                        $order_currency,
+                        $remote_amount,
+                        $remote_currency
+                    ));
+                    status_header(400);
+                    exit('Amount Mismatch');
+                }
+
+                // 6. Verify Currency
+                if ($remote_currency !== $order_currency) {
+                    $this->log("Currency mismatch for Order #{$order_id}. Expected: {$order_currency}, API: {$remote_currency}");
+                    $order->update_status('on-hold', sprintf(
+                        __('Payment verification failed: Currency mismatch (Expected: %s, Received: %s).', $this->id),
+                        $order_currency,
+                        $remote_currency
+                    ));
+                    status_header(400);
+                    exit('Currency Mismatch');
+                }
+
+                // 7. Store verified transaction details in order meta
+                $order->update_meta_data('UPayments_Result', $remote_status);
+                $order->update_meta_data('UPayments_PaymentID', $verified_data['payment_id'] ?? $payment_id);
+                $order->update_meta_data('UPayments_TrackID', $verified_data['track_id'] ?? $track_id);
+                $order->update_meta_data('UPayments_TranID', $verified_data['tran_id'] ?? '');
+                $order->update_meta_data('UPayments_Ref', $verified_data['ref'] ?? '');
+                $order->update_meta_data('UPayments_Auth', $verified_data['auth'] ?? '');
+                $order->update_meta_data('UPayments_PostDate', current_time('mysql'));
+                $order->update_meta_data('_payment_method_title', 'UPayments');
+
+                // 8. Process Order Status based on verified status
+                if ($remote_status === 'CAPTURED' || $remote_status === 'SUCCESS') {
+                    $order->update_meta_data('UPayments_webhook_triggered', 1);
+                    $order->save();
+
+                    // Set transaction ID, decrement stock, and trigger completion logic
+                    $order->payment_complete($verified_data['payment_id'] ?? $payment_id);
+
+                    // Add verified note to order history
+                    $order->add_order_note(
+                        sprintf(__('Payment verified successfully via UPayments API. PaymentID: %s, TranID: %s', $this->id), 
+                        $verified_data['payment_id'] ?? $payment_id, 
+                        $verified_data['tran_id'] ?? 'N/A')
+                    );
+
+                    // If merchant explicitly requested auto-completion and order doesn't require physical fulfilment
+                    if ($this->getIsOrderComplete() && $order->needs_processing() === false && $order->get_status() !== 'completed') {
+                        $order->update_status('completed', __('Order auto-completed as configured in gateway settings.', $this->id));
                     }
-                    else
-                    {
-                        $this->log("Order references matched.");
-                        $status = sanitize_text_field($_REQUEST["result"]);
-                        $PaymentID = sanitize_text_field($_REQUEST["payment_id"]);
-                        $TrackID = sanitize_text_field($_REQUEST["track_id"]);
-                        $payment_type = sanitize_text_field($_REQUEST["payment_type"]);
-                        $PostDate = sanitize_text_field($_REQUEST["post_date"]);
-                        $TranID = sanitize_text_field($_REQUEST["tran_id"]);
-                        $Ref = sanitize_text_field($_REQUEST["ref"]);
-                        $Auth = sanitize_text_field($_REQUEST["auth"]);
 
-                        $order->delete_meta_data("UPayments_Result");
-                        $order->delete_meta_data("UPayments_PaymentID");
-                        $order->delete_meta_data("UPayments_TrackID");
-                        $order->delete_meta_data("UPayments_payment_type");
-                        $order->delete_meta_data("UPayments_PostDate");
-                        $order->delete_meta_data("UPayments_TranID");
-                        $order->delete_meta_data("UPayments_Ref");
-                        $order->delete_meta_data("UPayments_Auth");
-                        $order->delete_meta_data("_payment_method_title");
-
-                        $order->add_meta_data("UPayments_Result", $status);
-                        $order->add_meta_data("UPayments_PaymentID", $PaymentID);
-                        $order->add_meta_data("UPayments_TrackID", $TrackID);
-                        $order->add_meta_data("UPayments_payment_type", $payment_type);
-                        $order->add_meta_data("UPayments_PostDate", $PostDate);
-                        $order->add_meta_data("UPayments_TranID", $TranID);
-                        $order->add_meta_data("UPayments_Ref", $Ref);
-                        $order->add_meta_data("UPayments_Auth", $Auth);
-                        $order->add_meta_data("_payment_method_title", 'UPayments');
-
-                        $order->save_meta_data();
-
-                        if ($status == "CAPTURED" || $status == "SUCCESS"){
-                            $order->add_meta_data("UPayments_webhook_triggered", 1);
-                            $order->save_meta_data();
-                            $this->log("Order status CAPTURED");
-
-                            $paid_order_status = 'processing';  
-                            if ($order->get_status() == 'completed' || $this->getIsOrderComplete()) {      
-                                $paid_order_status = 'completed';
-                            }
-                            
-                            $order->update_status($paid_order_status, __('Payment successful with UPayments. PaymentID: '.$PaymentID, $this->domain));
-                            $woocommerce->cart->empty_cart();
-                            exit();
-                        }else{
-                            $this->log("Order status not CAPTURED. " . $status);
-                        }
+                    if (function_exists('WC') && WC()->cart) {
+                        WC()->cart->empty_cart();
                     }
-                }
-                else
-                {
-                    $this->log("Order Result not set.");
-                }
-            }catch(\Exception $e){
-                $this->log("Webhook Catch");
-                $this->log("Exception:" . $e->getMessage());
 
-                $order->update_status("failed", "Error :" . $e->getMessage());
-                $order->add_meta_data("UPayments_WHS", "failed");
-                $woocommerce->cart->empty_cart();
+                    status_header(200);
+                    exit('OK');
+                } else {
+                    $this->log("Payment not successful. Verified Status: {$remote_status}");
+                    $order->update_status('failed', sprintf(__('UPayments payment unsuccessful. Status: %s', $this->id), $remote_status));
+                    $order->save();
+
+                    status_header(200);
+                    exit('Payment Failed');
+                }
+
+            } catch (\Throwable $e) {
+                $this->log("Webhook Error: " . $e->getMessage());
+
+                // Safely update order only if $order is a valid WC_Order instance
+                if (isset($order) && $order instanceof \WC_Order) {
+                    $order->update_status('failed', 'Webhook Exception: ' . $e->getMessage());
+                    $order->update_meta_data('UPayments_WHS', 'failed');
+                    $order->save();
+                }
+
+                status_header(500);
+                exit('Server Error');
             }
-            exit();
+        }
+
+        /**
+         * Server-to-server API validation helper.
+         *
+         * @param string $payment_id
+         * @param string $track_id
+         * @param WC_Order $order
+         * @return array|false
+         */
+        private function verifyTransactionWithApi(string $payment_id, string $track_id)
+        {
+            $api_url = trailingslashit($this->getApiUrl()) . 'get-payment-status';
+
+            $payload = [
+                'track_id'   => $track_id,
+                'payment_id' => $payment_id,
+            ];
+
+            $response = wp_remote_post($api_url, [
+                'method'      => 'POST',
+                'timeout'     => 15,
+                'redirection' => 5,
+                'httpversion' => '1.1',
+                'blocking'    => true,
+                'headers'     => [
+                    'Authorization' => 'Bearer ' . $this->apiKey,
+                    'Content-Type'  => 'application/json',
+                    'Accept'        => 'application/json',
+                ],
+                'body'        => wp_json_encode($payload),
+            ]);
+
+            if (is_wp_error($response)) {
+                $this->log('API Status Check WP_Error: ' . $response->get_error_message());
+                return false;
+            }
+
+            $response_code = wp_remote_retrieve_response_code($response);
+            $response_body = wp_remote_retrieve_body($response);
+            $data          = json_decode($response_body, true);
+
+            if ($response_code !== 200 || empty($data)) {
+                $this->log("API Verification HTTP {$response_code}: " . $response_body);
+                return false;
+            }
+
+            return [
+                'status'     => $data['data']['payment_status'] ?? $data['result'] ?? '',
+                'amount'     => $data['data']['amount'] ?? $data['order']['amount'] ?? 0,
+                'currency'   => $data['data']['currency'] ?? $data['order']['currency'] ?? '',
+                'payment_id' => $data['data']['payment_id'] ?? $payment_id,
+                'track_id'   => $data['data']['track_id'] ?? $track_id,
+                'tran_id'    => $data['data']['tran_id'] ?? '',
+                'ref'        => $data['data']['ref'] ?? '',
+                'auth'       => $data['data']['auth'] ?? '',
+            ];
         }
 
         public function check_ipn_response()
         {
             global $woocommerce;
             if (isset($_GET["get_order_status"])){
-                $this->get_payment_staus();
+                $this->get_payment_status();
             }elseif (isset($_GET["page"])){
                 $this->return_from_upayments();
             }else{
@@ -799,38 +866,47 @@ function woocommerceUpaymentsInit() {
             $ipn_url = site_url() . "/?wc-api=wc_upayments&wc_order_id=" . $order_id;
 
             $unique_order_id = md5($order_id * time());
-            $product_name = [];
-            $product_price = [];
-            $product_qty = [];
-            $product_type = [];
 
             $productArrayNew = [];
+            $product_name    = [];
+            $product_price   = [];
+            $product_qty     = [];
+            $product_type    = [];
             $cart_has_custom_product = false;
 
-            $i=0;
+            foreach ($order->get_items('line_item') as $item_id => $item) {
+                $product = is_object($item) && method_exists($item, 'get_product')
+                    ? $item->get_product()
+                    : (is_array($item) ? $order->get_product_from_item($item) : false);
 
-            foreach ($order->get_items('line_item') as $item)
-            {
-                /** @var WC_Order_Item_Product $item */
-                $product = $item->get_product();
-                $sale_price = $product->get_regular_price();
-                $sale_price = !empty($sale_price) ? $sale_price : 0;
-                if($product->get_type() === 'custom_type'){
+                // Check custom type
+                if ($product && is_object($product) && method_exists($product, 'get_type') && $product->get_type() === 'custom_type') {
                     $cart_has_custom_product = true;
                 }
-                
-                $item_data = $item->get_data();
-                $product_name[] = $item->get_name();
-                $product_price[] = $sale_price;
-                $product_qty[] = $item_data["quantity"];
-                $product_type[] = $product->get_type();
-                
-                $productArrayNew[$i]['name'] = $item->get_name();
-                $productArrayNew[$i]['description']= $item->get_name();
-                $productArrayNew[$i]['price'] = $sale_price;
-                $productArrayNew[$i]['quantity'] =$item_data["quantity"];
-                $productArrayNew[$i]['type'] = $product->get_type();
-                $i++;
+
+                $quantity = (int) $item->get_quantity();
+                if ($quantity <= 0) {
+                    $quantity = 1;
+                }
+
+                // Calculate actual unit price charged after line-item discounts
+                // get_item_total() returns price per single unit for this item
+                // Set 2nd param to true if your line item prices should include taxes, or false for subtotal before tax
+                $unit_price = (float) $order->get_item_total($item, false, 'view');
+                $product_type_slug = $product ? $product->get_type() : 'simple';
+
+                $product_name[]  = $item->get_name();
+                $product_price[] = $unit_price;
+                $product_qty[]   = $quantity;
+                $product_type[]  = $product_type_slug;
+
+                $productArrayNew[] = [
+                    'name'        => $item->get_name(),
+                    'description' => $item->get_name(),
+                    'price'       => number_format($unit_price, 3, '.', ''),
+                    'quantity'    => $quantity,
+                    'type'        => $product_type_slug,
+                ];
             }
 
             if($this->paymentData == null ) {
@@ -848,7 +924,7 @@ function woocommerceUpaymentsInit() {
             $extension_data = isset($request_data['extensions']['upayments']) ? $request_data['extensions']['upayments'] : [];
 
             if(!empty($extension_data)){
-                $src = '';
+                $src = 'knet';
                 if (isset($extension_data['upayment_payment_type'])) {
                     $src = sanitize_text_field($extension_data['upayment_payment_type']);
                 }
@@ -859,6 +935,7 @@ function woocommerceUpaymentsInit() {
                 }
 
                 $isSaveCard = false;
+                $isSaveCardRequested = false;
                 if(isset($extension_data['save_card'])){
                     $isSaveCardRequested = $extension_data['save_card'] == 1 ? true : false;
                 }
@@ -878,17 +955,19 @@ function woocommerceUpaymentsInit() {
                 // Checck if Upayments Payment type is empty then return error.
                 if ($whitelabled && empty($src)){
                     WC()->session->set("refresh_totals", true);
-                    wc_add_notice(__("Please select a UPayments Payment Type.", $this->domain) , "error");
+                    wc_add_notice(__("Please select a UPayments Payment Type.", $this->id) , "error");
                     return ["result" => "failure", "redirect" => wc_get_checkout_url() , ];
                 }
 
                 // Check if Auto Deduction Feature is on and save card toggle is disabled then return error.
                 if($this->autoDeduction === 'yes' && (!$isSaveCardRequested) && $cart_has_custom_product) {
                     $this->log("Auto Deduction Enabled and Save Card Toggle Disabled");
-                    wc_add_notice(__("Please Enable Save Card Toggle to Proceed with Subscription Purchase.", $this->domain) , "error");
+                    wc_add_notice(__("Please Enable Save Card Toggle to Proceed with Subscription Purchase.", $this->id) , "error");
                     return ["result" => "failure", "redirect" => wc_get_checkout_url()];
                 }
 
+                $subscription_plan = 'one_time';
+                $subscription_interval = 0;
                 if(isset($extension_data['upay_subscription_plan'])){
                     $subscription_plan = $extension_data['upay_subscription_plan'];
                 }
@@ -897,21 +976,21 @@ function woocommerceUpaymentsInit() {
                 }
 
                 if($this->autoDeduction === 'yes' && ($subscription_plan !== 'one_time' && $subscription_interval <= 0)) {
-                    wc_add_notice(__("Please select a valid Billing Interval.", $this->domain), "error");
+                    wc_add_notice(__("Please select a valid Billing Interval.", $this->id), "error");
                     return ["result" => "failure", "redirect" => wc_get_checkout_url()];
                 }
             } else {
                 $this->log("Whitelabled: " . ($whitelabled ? "true" : "false"));
                 if ($whitelabled && !isset($_POST["upayment_payment_type"])){
                     WC()->session->set("refresh_totals", true);
-                    wc_add_notice(__("Please select a UPayments Payment Type.", $this->domain) , "error");
+                    wc_add_notice(__("Please select a UPayments Payment Type.", $this->id) , "error");
                     return ["result" => "failure", "redirect" => wc_get_checkout_url() , ];
                 }
 
                 $src = "knet";
                 $cardToken = null;
                 $isSaveCard = false;
-                $isSaveCardRequested = sanitize_text_field($_POST["save_card"]) == 1 ? true : false;
+                $isSaveCardRequested = isset($_POST["save_card"]) && sanitize_text_field($_POST["save_card"]) == 1;
                 if ($whitelabled){
                     $whitelabled = true;
                     $upayment_payment_type = sanitize_text_field($_POST["upayment_payment_type"]);
@@ -924,6 +1003,8 @@ function woocommerceUpaymentsInit() {
                     $isSaveCard = $src == 'cc' && $isSaveCardRequested;
                 }
 
+                $subscription_plan = 'one_time';
+                $subscription_interval = 0;
                 if (isset($_POST['upay_subscription_plan'])) {
                     $subscription_plan = sanitize_text_field($_POST['upay_subscription_plan']);
                 }
@@ -932,13 +1013,13 @@ function woocommerceUpaymentsInit() {
                 }
 
                 if($this->autoDeduction === 'yes' && ($subscription_plan !== 'one_time' && $subscription_interval <= 0)) {
-                    wc_add_notice(__("Please select a valid Billing Interval.", $this->domain), "error");
+                    wc_add_notice(__("Please select a valid Billing Interval.", $this->id), "error");
                     return ["result" => "failure", "redirect" => wc_get_checkout_url()];
                 }
 
                 if($this->autoDeduction === 'yes' && (!$isSaveCardRequested) && $cart_has_custom_product) {
                     $this->log("Auto Deduction Enabled and Save Card Toggle Disabled");
-                    wc_add_notice(__("Please Enable Save Card Toggle to Proceed with Subscription Purchase.", $this->domain) , "error");
+                    wc_add_notice(__("Please Enable Save Card Toggle to Proceed with Subscription Purchase.", $this->id) , "error");
                     return ["result" => "failure", "redirect" => wc_get_checkout_url()];
                 }
             }
@@ -946,12 +1027,13 @@ function woocommerceUpaymentsInit() {
             $customer_unq_token = null;
             $credit_card_token = $cardToken;
             $phone = str_replace(' ', '', $order_data["billing"]["phone"]); // Replaces all spaces with hyphens.
-            $phone = preg_replace('/[^A-Za-z0-9\-]/','',$phone);
+            $phone = preg_replace(self::PHONE_CLEAN_REGEX, '', $phone);
             $customer_unq_token = $phone;
 
             $user_id = get_current_user_id();
             if($user_id && !empty($customer_unq_token)) {
-                $customer_unq_token = $customer_unq_token.$user_id;
+                $customer_unq_token = Utils::generateDynamicToken($user_id, $customer_unq_token)['token'];
+                update_user_meta($user_id, 'customer_unique_token', $customer_unq_token);
             }
 
             if (substr($customer_unq_token, 0, 1) === '0') {
@@ -991,104 +1073,107 @@ function woocommerceUpaymentsInit() {
                         "ibanNumber" => $this->ibanNumber
                     ];
                 }
-                $this->log("extraMerchantData");
-                $this->log($extraMerchantData);
+            }
+
+            $user_agent = isset($_SERVER['HTTP_USER_AGENT'])
+                ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT']))
+                : '';
+
+            $screen_width  = isset($_POST['upay_screen_width']) ? sanitize_text_field(wp_unslash($_POST['upay_screen_width'])) : '1920';
+            $screen_height = isset($_POST['upay_screen_height']) ? sanitize_text_field(wp_unslash($_POST['upay_screen_height'])) : '1080';
+            $color_depth   = isset($_POST['upay_color_depth']) ? sanitize_text_field(wp_unslash($_POST['upay_color_depth'])) : '24';
+            $timezone_offset  = isset($_POST['upay_timezone_offset']) ? sanitize_text_field(wp_unslash($_POST['upay_timezone_offset'])) : '0';
+            $java_enabled     = isset($_POST['upay_java_enabled']) && $_POST['upay_java_enabled'] === 'true' ? 'true' : 'false';
+            $browser_language = 'en';
+            if (isset($_POST['upay_browser_language'])) {
+                $browser_language = sanitize_text_field(wp_unslash($_POST['upay_browser_language']));
+            } elseif (isset($_SERVER['HTTP_ACCEPT_LANGUAGE'])) {
+                $browser_language = substr(sanitize_text_field(wp_unslash($_SERVER['HTTP_ACCEPT_LANGUAGE'])), 0, 5);
             }
 
             $params = json_encode([
-                "returnUrl" => $success_url, 
-                "cancelUrl" => $error_url, 
-                "notificationUrl" => $ipn_url, 
+                "returnUrl" => $success_url,
+                "cancelUrl" => $error_url,
+                "notificationUrl" => $ipn_url,
                 "products" => $productArrayNew,
                 "order" =>[
-                    "amount" => $order_total, 
-                    "currency" => $this->getCurrencyCode($order_data["currency"]) , 
-                    "id" => $unique_order_id, 
-                ], 
+                    "amount" => $order_total,
+                    "currency" => $this->getCurrencyCode($order_data["currency"]),
+                    "id" => $unique_order_id,
+                ],
                 "reference" => [
-                    "id" => "".$order_id, 
-                ], 
+                    "id" => "".$order_id,
+                ],
                 "customer" => [
-                    "uniqueId" => $customer_unq_token, 
-                    "name" => $order_data["billing"]["first_name"] . " " . $order_data["billing"]["last_name"], 
-                    "email" => $order_data["billing"]["email"], 
-                    "mobile" => $phone, 
-                ], 
+                    "uniqueId" => $customer_unq_token,
+                    "name" => $order_data["billing"]["first_name"] . " " . $order_data["billing"]["last_name"],
+                    "email" => $order_data["billing"]["email"],
+                    "mobile" => $phone,
+                ],
                 "plugin" => [
-                    "src" => "woocommerce", 
-                ], 
-                "is_whitelabled" => $whitelabled, 
-                "language" => "en", 
-                "isSaveCard" => $isSaveCard, 
-                "paymentGateway" => ["src" => $src,], 
+                    "src" => "woocommerce",
+                ],
+                "is_whitelabled" => $whitelabled,
+                "language" => "en",
+                "isSaveCard" => $isSaveCard,
+                "paymentGateway" => ["src" => $src,],
                 "tokens" => [
-                    "creditCard" => $credit_card_token, 
-                    "customerUniqueToken" => $customerUnqToken, 
-                ], 
-                "device" => [
-                    "browser" => "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36 OPR/93.0.0.0", 
+                    "creditCard" => $credit_card_token,
+                    "customerUniqueToken" => $customerUnqToken,
+                ],
+                "device"            => [
+                    "browser"        => $user_agent,
                     "browserDetails" => [
-                        "screenWidth" => "1920", 
-                        "screenHeight" => "1080", 
-                        "colorDepth" => "24", 
-                        "javaEnabled" => "false", 
-                        "language" => "en", 
-                        "timeZone" => "-180",
+                        "screenWidth"                 => (string) $screen_width,
+                        "screenHeight"                => (string) $screen_height,
+                        "colorDepth"                  => (string) $color_depth,
+                        "javaEnabled"                 => (string) $java_enabled,
+                        "language"                    => (string) $browser_language,
+                        "timeZone"                    => (string) $timezone_offset,
                         "3DSecureChallengeWindowSize" => "500_X_600"
-                    ], 
-                ], 
+                    ],
+                ],
                 "extraMerchantData" => $extraMerchantData,
             ]);
-
-            $this->log(__("Create Payment Request:", $this->domain));
-            $this->log($params);
-
-            $this->log(__("API key:", $this->domain));
-            $this->log($this->apiKey);
 
             $ch = curl_init();
             curl_setopt($ch, CURLOPT_URL, $this->getApiUrl('charge'));
             curl_setopt($ch, CURLOPT_POST, 1);
             curl_setopt($ch, CURLOPT_POSTFIELDS, $params);
-            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
             curl_setopt($ch, CURLOPT_USERAGENT, $this->getUserAgent());
-            curl_setopt($ch, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . $this->apiKey, "Accept: application/json", "Content-Type: application/json", ]);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                "Authorization: Bearer " . $this->apiKey,
+                "Accept: application/json",
+                "Content-Type: application/json",
+            ]);
 
             $response = curl_exec($ch);
-            $this->log('Response: ', $response);
+            $this->log('Response: ' . $response);
             curl_close($ch);
 
             try
             {
                 if (!$response){
 
-                    $this->log(__("Create Payment Response: curl error", $this->domain) . " => " . curl_error($ch));
+                    $this->log(__("Create Payment Response: curl error", $this->id) . " => " . curl_error($ch));
                     WC()->session->set("refresh_totals", true);
-                    wc_add_notice(__("Payment request failed. " . curl_error($ch) , $this->domain) , "error");
+                    wc_add_notice(__("Payment request failed. " . curl_error($ch) , $this->id) , "error");
                     return ["result" => "failure", "redirect" => wc_get_checkout_url()];
 
                 }else{
                     $result = json_decode($response, true);
-                    $this->log(__("Create Payment Response:", $this->domain));
-                    $this->log($result);
+                    $this->log(__("Create Payment Response:", $this->id));
                     if (!$result){
-                        
                         WC()->session->set("refresh_totals", true);
-                        wc_add_notice(__("Payment request failed. Empty Response Received.", $this->domain) , "error");
+                        wc_add_notice(__("Payment request failed. Empty Response Received.", $this->id) , "error");
                         return ["result" => "failure", "redirect" => wc_get_checkout_url()];
 
                     }elseif (isset($result["status"]) && !$result["status"]){
 
                         WC()->session->set("refresh_totals", true);
-                        wc_add_notice(__("Payment request failed. " . $result["message"], $this->domain) , "error");
-                        return ["result" => "failure", "redirect" => wc_get_checkout_url()];
-
-                    }elseif (isset($result["message"]) && !isset($result["status"])){
-
-                        WC()->session->set("refresh_totals", true);
-                        wc_add_notice(__("Payment request failed. " . $result["message"], $this->domain) , "error");
+                        wc_add_notice(__("Payment request failed. " . $result["message"], $this->id) , "error");
                         return ["result" => "failure", "redirect" => wc_get_checkout_url()];
 
                     }elseif (isset($result["status"]) && $result["status"]){
@@ -1113,12 +1198,12 @@ function woocommerceUpaymentsInit() {
                             $order->delete_meta_data("UPayments_order_id");
                             $order->add_meta_data("UPayments_order_id", $unique_order_id);
                             $order->save_meta_data();
-                            $this->log(__($result["data"]["transactionData"]["redirect_url"], $this->domain));
+                            $this->log(__($result["data"]["transactionData"]["redirect_url"], $this->id));
 
                             return ["result" => "success", "redirect" => $result["data"]["transactionData"]["redirect_url"], ];
                         }
                     }else{
-                        $status_message = __("UPayments: Something went wrong, please contact the merchant", $this->domain);
+                        $status_message = __("UPayments: Something went wrong, please contact the merchant", $this->id);
                         WC()->session->set("refresh_totals", true);
                         wc_add_notice($status_message, "error");
                         return ["result" => "failure", "redirect" => wc_get_checkout_url()];
@@ -1126,8 +1211,8 @@ function woocommerceUpaymentsInit() {
                 }
             }catch(\Exception $e){
                 $message = $e->getMessage();
-                $this->log(__("Create Payment Response: catch exception", $this->domain) . " => " . $message);
-                $status_message = __("UPayments: Something went wrong, please contact the merchant", $this->domain);
+                $this->log(__("Create Payment Response: catch exception", $this->id) . " => " . $message);
+                $status_message = __("UPayments: Something went wrong, please contact the merchant", $this->id);
 
                 WC()->session->set("refresh_totals", true);
                 wc_add_notice($status_message, "error");
@@ -1141,12 +1226,12 @@ function woocommerceUpaymentsInit() {
             $template_args = array('gateway' => $this,'save_card_enabled' => ('yes' == $save_card_enabled));
             // Check setting for design toggle
             $use_new_design = ($this->get_option('use_new_design') == 'yes') ? true : false;
-            
-            wc_get_template( 
-                $use_new_design ? 'new-design-form.php' : 'old-design-form.php', 
-                $template_args, 
-                $this->domain, 
-                untrailingslashit( plugin_dir_path( __FILE__ ) ) . '/templates/' 
+
+            wc_get_template(
+                $use_new_design ? 'new-design-form.php' : 'old-design-form.php',
+                $template_args,
+                $this->domain,
+                untrailingslashit( plugin_dir_path( __FILE__ ) ) . '/templates/'
             );
         }
         
@@ -1157,7 +1242,7 @@ function woocommerceUpaymentsInit() {
          */
         public function enqueue_scripts() {
             $plugin_url = plugin_dir_url( __FILE__ );
-            wp_enqueue_style('customer-new-style', $plugin_url . 'assets/css/customer.css', array(), '3.0.0' );
+            wp_enqueue_style('customer-new-style', $plugin_url . 'assets/css/customer.css', array(), '3.0.0');
             // Check if we are on the checkout page AND the gateway is active
             if ( ! is_checkout() || ! $this->is_available() ) {
                 return;
@@ -1182,7 +1267,7 @@ function woocommerceUpaymentsInit() {
                     'isLoggedIn' => is_user_logged_in(),
                     'userId'     => get_current_user_id(),
                 ]);
-            }            
+            }
             
             // Localize data needed by the JavaScript (e.g., API keys, environment settings)
             wp_localize_script( 'your-gateway-core', 'YourGatewayParams', array(
@@ -1195,10 +1280,10 @@ function woocommerceUpaymentsInit() {
          */
         public function admin_enqueue_scripts() {
             $plugin_url = plugin_dir_url( __FILE__ );
-            
+
             // Check if we are on the correct gateway settings page
-            if ( isset( $_GET['page'] ) && $_GET['page'] == 'wc-settings' && isset( $_GET['tab'] ) && $_GET['tab'] == 'checkout' && isset( $_GET['section'] ) && $_GET['section'] == $this->id ) {    
-                
+            if ( isset( $_GET['page'] ) && $_GET['page'] == 'wc-settings' && isset( $_GET['tab'] ) && $_GET['tab'] == 'checkout' && isset( $_GET['section'] ) && $_GET['section'] == $this->id ) {
+
                 wp_enqueue_style('upayments-multimerchant-style',$plugin_url.'assets/css/admin-style.css', [], '3.0.0' );
                 wp_enqueue_script('upayments-multimerchant-repeater',$plugin_url.'assets/js/multimerchant-repeater.js',array('jquery'), '3.0.0',true);
             }
@@ -1212,12 +1297,36 @@ function woocommerceUpaymentsInit() {
                 wp_enqueue_script(
                     'upayments-admin-logic',$plugin_url.'assets/js/admin-settings.js',array( 'jquery' ),'3.0.0',true
                 );
-                
+
                 // Also enqueue a small style block to make the disabled row visually distinct
                 wp_add_inline_style(
                     'woocommerce_admin_styles', '.upayments-disabled-setting { opacity: 0.5; pointer-events: none; }'
                 );
             }
+        }
+
+        public function enqueue_thankyou_scripts($order_id)
+        {
+            $order = wc_get_order($order_id);
+            if (!$order || $order->get_payment_method() !== $this->id) {
+                return;
+            }
+
+            wp_enqueue_script(
+                'upayments-thankyou',
+                plugins_url('assets/js/upayments-thankyou.js', __FILE__),
+                ['jquery'],
+                '3.2.0',
+                true
+            );
+
+            wp_localize_script('upayments-thankyou', 'upaymentsData', [
+                'ajax_url'          => admin_url('admin-ajax.php'),
+                'nonce'             => wp_create_nonce('upayments_order_status_nonce'),
+                'order_id'          => $order->get_id(),
+                'order_key'         => $order->get_order_key(),
+                'i18n_order_status' => __('Order Status', $this->id),
+            ]);
         }
 
         public function admin_order_details($order)
@@ -1230,18 +1339,18 @@ function woocommerceUpaymentsInit() {
                 if (!empty($payment_status) || !empty($upayment_id))
                 { ?>
                     <table class="wc-order-totals" style="border-top: 1px solid #999; margin-top:12px; padding-top:12px">
-            <tbody>
+                        <tbody>
                             <tr>
-                                <td class="label"><h3 style="margin:0"><?php echo __("Payment Status", $this->domain); ?>:</h3></td>
-                <td width="1%"></td>
-                <td class="total">
+                                <td class="label"><h3 style="margin:0"><?php echo __("Payment Status", $this->id); ?>:</h3></td>
+                                <td style="width: 1%;"></td>
+                                <td class="total">
                                     <span class="woocommerce-Price-amount amount"><strong><?php echo $payment_status; ?></strong></span>
                                 </td>
                             </tr>
                             <tr>
-                <td class="label"><h3 style="margin:0"><?php echo __("UPayment ID", $this->domain); ?>:</h3></td>
-                <td width="1%"></td>
-                <td class="total">
+                                <td class="label"><h3 style="margin:0"><?php echo __("UPayment ID", $this->id); ?>:</h3></td>
+                                <td style="width: 1%;"></td>
+                                <td class="total">
                                     <span class="woocommerce-Price-amount amount">
                                         <strong>
                                         <?php echo $upayment_id; ?>
@@ -1249,7 +1358,6 @@ function woocommerceUpaymentsInit() {
                                     </span>
                                 </td>
                             </tr>
-                            
                         </tbody>
                     </table>
             <?php
@@ -1280,11 +1388,11 @@ function woocommerceUpaymentsInit() {
             $post_data = $this->get_post_data();
 
             if (empty($post_data["woocommerce_upayments_api_key"])){
-                WC_Admin_Settings::add_error(__("Please enter UPayments API Key", $this->domain));
+                WC_Admin_Settings::add_error(__("Please enter UPayments API Key", $this->id));
             }else{
                 if(isset($post_data['woocommerce_upayments_enable_multimerchant']) && $post_data['woocommerce_upayments_enable_multimerchant'] == 1) {
                     if(empty($post_data['woocommerce_upayments_iban_number']) || empty($post_data['woocommerce_upayments_cc_charge']) || empty($post_data['woocommerce_upayments_cc_charge_type']) || empty($post_data['woocommerce_upayments_knet_charge']) || empty($post_data['woocommerce_upayments_knet_charge_type'])) {
-                        WC_Admin_Settings::add_error(__("Please enter Multimerchant Configuration", $this->domain));
+                        WC_Admin_Settings::add_error(__("Please enter Multimerchant Configuration", $this->id));
                     }
                 } else {
                     $post_data['woocommerce_upayments_iban_number'] = null;
@@ -1351,7 +1459,7 @@ function woocommerceUpaymentsInit() {
                 }
 
                 if ( $match_found ) {
-                    $this->log( "Routing match found: {$condition_type} = {$condition_value}. Using IBAN: {$rule['iban_number']}.", 'info' );
+                    $this->log( "Routing match found: {$condition_type} = {$condition_value}. Using IBAN: {$rule['iban_number']}.");
                     return [
                         'merchant_id' => $rule['merchant_id'],
                         'api_key'     => $rule['api_key'],
@@ -1359,7 +1467,7 @@ function woocommerceUpaymentsInit() {
                 }
             }
             // 3. Fallback: If no custom rule matched, use default credentials
-            $this->log( 'No specific routing rule matched. Using default credentials.', 'info' );
+            $this->log( 'No specific routing rule matched. Using default credentials.');
             return $this->get_default_credentials();
         }
 
@@ -1387,14 +1495,14 @@ function woocommerceUpaymentsInit() {
             }
 
             $conditions = [
-                'fixed'      => __( 'Fixed', $this->domain ),
-                'percentage'       => __( 'Percentage', $this->domain ),
+                'fixed'      => __( 'Fixed', $this->id ),
+                'percentage' => __( 'Percentage', $this->id ),
             ];
 
             // Pass the repeater HTML to a dedicated function for cleanliness
             ob_start();
             ?>
-            <tr valign="top" class="upayments-multimerchant-repeater">
+            <tr class="upayments-multimerchant-repeater" style="vertical-align: top;">
                 <th scope="row" class="titledesc"><?php echo esc_html( $data['title'] ); ?></th>
                 <td class="forminp forminp-<?php echo esc_attr( sanitize_title( $data['type'] ) ); ?>">
                     <p class="description"><?php echo wp_kses_post( $data['description'] ); ?></p>
@@ -1412,13 +1520,13 @@ function woocommerceUpaymentsInit() {
                             <tbody>
                                 <tr class="">
                                     <td>
-                                        <input type="text" name="woocommerce_upayments_iban_number" data-field="iban_number" value="<?php echo $this->get_option('iban_number'); ?>" placeholder="<?php esc_html_e('KWK00445...', $this->domain); ?>" style="width: 400px;"/>
+                                        <input type="text" name="woocommerce_upayments_iban_number" id="woocommerce_upayments_iban_number" data-field="iban_number" value="<?php echo $this->get_option('iban_number'); ?>" placeholder="<?php esc_html_e('KWK00445...', $this->domain); ?>" style="width: 400px;" aria-label="IBAN Number"/>
                                     </td>
                                     <td>
-                                        <input type="number" name="woocommerce_upayments_knet_charge" data-field="knet_charge" value="<?php echo $this->get_option('knet_charge'); ?>" placeholder="<?php esc_html_e('0.000', $this->domain);?>" min="0.000" max="10.000" step="0.010"/>
+                                        <input type="number" name="woocommerce_upayments_knet_charge" id="woocommerce_upayments_knet_charge" data-field="knet_charge" value="<?php echo $this->get_option('knet_charge'); ?>" placeholder="<?php esc_html_e('0.000', $this->domain);?>" min="0.000" max="10.000" step="0.010" aria-label="Knet Charge"/>
                                     </td>
                                     <td>
-                                        <select data-field="knet_charge_type" name="woocommerce_upayments_knet_charge_type">
+                                        <select data-field="knet_charge_type" name="woocommerce_upayments_knet_charge_type" id="woocommerce_upayments_knet_charge_type" aria-label="Knet Charge Type">
                                             <option value=""><?php esc_html_e( 'Select', $this->domain ); ?></option>
                                             <?php foreach ( $conditions as $val => $label ) : ?>
                                                 <option value="<?php echo esc_attr( $val ); ?>" <?php selected( $val, $this->get_option('knet_charge_type') ); ?>>
@@ -1428,10 +1536,10 @@ function woocommerceUpaymentsInit() {
                                         </select>
                                     </td>
                                     <td>
-                                        <input type="number" name="woocommerce_upayments_cc_charge" data-field="cc_charge" value="<?php echo $this->get_option('cc_charge'); ?>" placeholder="<?php esc_html_e('0.000', $this->domain); ?>" min="0.000" max="10.000" step="0.010"/>
+                                        <input type="number" name="woocommerce_upayments_cc_charge" id="woocommerce_upayments_cc_charge" data-field="cc_charge" value="<?php echo $this->get_option('cc_charge'); ?>" placeholder="<?php esc_html_e('0.000', $this->domain); ?>" min="0.000" max="10.000" step="0.010" aria-label="CC Charge"/>
                                     </td>
                                     <td>
-                                        <select data-field="cc_charge_type" name="woocommerce_upayments_cc_charge_type">
+                                        <select data-field="cc_charge_type" name="woocommerce_upayments_cc_charge_type" id="woocommerce_upayments_cc_charge_type" aria-label="CC Charge Type">
                                             <option value=""><?php esc_html_e( 'Select', $this->domain ); ?></option>
                                             <?php foreach ( $conditions as $val => $label ) : ?>
                                                 <option value="<?php echo esc_attr( $val ); ?>" <?php selected( $val, $this->get_option('cc_charge_type') ); ?>>
@@ -1441,7 +1549,7 @@ function woocommerceUpaymentsInit() {
                                         </select>
                                     </td>
                                 </tr>
-                            </tbody>                           
+                            </tbody>
                         </table>
                     </div>
                     <input type="hidden" name="woocommerce_<?php echo esc_attr( $this->id ); ?>_<?php echo esc_attr( $key ); ?>"  id="<?php echo esc_attr( $key ); ?>" value="<?php echo esc_attr( $settings ); ?>" />
@@ -1482,15 +1590,15 @@ function woocommerceUpaymentsInit() {
 
         public function getSiteName()
         {
-            return __("Woocommerce", $this->domain);
+            return __("Woocommerce", $this->id);
         }
 
-        public function getIsOrderComplete() {  
-            $flag = true;   
-            if ($this->isOrderComplete == 'no') { 
-                $flag = false;  
-            }   
-            return $flag;   
+        public function getIsOrderComplete() {
+            $flag = true;
+            if ($this->isOrderComplete == 'no') {
+                $flag = false;
+            }
+            return $flag;
         }
 
         public function getMode() {
@@ -1502,10 +1610,12 @@ function woocommerceUpaymentsInit() {
         }
         
         public function getAPIUrl($apiRoute = "")
-        {   
+        {
             $url = "https://apiv2api.upayments.com/api/v1/" . $apiRoute;
             if ($this->getMode()) {
-                $url = "https://sandboxapi.upayments.com/api/v1/" . $apiRoute;
+                $url = "https://dev-apiv2api.upayments.com/api/v1/" . $apiRoute;
+                //use below for sandbox
+                // $url = "https://sandboxapi.upayments.com/api/v1/" . $apiRoute;
             }
             return $url;
         }
@@ -1558,11 +1668,6 @@ function woocommerceUpaymentsInit() {
             return base64_decode($param);
         }
 
-        public function getApiKey()
-        {
-            return password_hash($this->apiKey, PASSWORD_BCRYPT);
-        }
-
         public function getCustomerUniqueToken($phone)
         {
             $token = "";
@@ -1570,21 +1675,21 @@ function woocommerceUpaymentsInit() {
             if (!empty($phone))
             {
                 $token = $phone;
-                $params = json_encode(["customerUniqueToken" => $token, ]);
+                $params = json_encode(["customerUniqueToken" => $token]);
                 $curl = curl_init();
-                curl_setopt_array($curl, 
+                curl_setopt_array($curl,
                 [
-                    CURLOPT_URL => $this->getAPIUrl('create-customer-unique-token') , 
-                    CURLOPT_RETURNTRANSFER => true, 
-                    CURLOPT_USERAGENT => $this->getUserAgent(), 
-                    CURLOPT_ENCODING => "", 
-                    CURLOPT_MAXREDIRS => 10, 
-                    CURLOPT_TIMEOUT => 0, 
-                    CURLOPT_FOLLOWLOCATION => true, 
-                    CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1, 
-                    CURLOPT_CUSTOMREQUEST => "POST", 
-                    CURLOPT_POSTFIELDS => $params, 
-                    CURLOPT_HTTPHEADER => ["Accept: application/json", "Content-Type: application/json", "Authorization: Bearer " . $this->apiKey ], 
+                    CURLOPT_URL => $this->getAPIUrl('create-customer-unique-token') ,
+                    CURLOPT_RETURNTRANSFER => true,
+                    CURLOPT_USERAGENT => $this->getUserAgent(),
+                    CURLOPT_ENCODING => "",
+                    CURLOPT_MAXREDIRS => 10,
+                    CURLOPT_TIMEOUT => 0,
+                    CURLOPT_FOLLOWLOCATION => true,
+                    CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+                    CURLOPT_CUSTOMREQUEST => "POST",
+                    CURLOPT_POSTFIELDS => $params,
+                    CURLOPT_HTTPHEADER => ["Accept: application/json", "Content-Type: application/json", "Authorization: Bearer " . $this->apiKey],
                 ]);
 
                 $response = curl_exec($curl);
@@ -1610,22 +1715,22 @@ function woocommerceUpaymentsInit() {
             if (!empty($api_key)){
                 $curl = curl_init();
 
-                curl_setopt_array($curl, array(
-                CURLOPT_URL => $this->getAPIUrl('check-payment-button-status'),
-                CURLOPT_SSL_VERIFYPEER => false,
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_ENCODING => '',
-                CURLOPT_MAXREDIRS => 10,
-                CURLOPT_TIMEOUT => 0,
-                CURLOPT_FOLLOWLOCATION => true,
-                CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-                CURLOPT_CUSTOMREQUEST => 'GET',
-                CURLOPT_USERAGENT => $this->getUserAgent(),
-                CURLOPT_HTTPHEADER => array(
-                    'Accept: application/json',
-                    'Content-Type: application/json',
-                    'Authorization: Bearer ' . $this->apiKey,
-                ),
+                curl_setopt_array(
+                    $curl, array(
+                    CURLOPT_URL => $this->getAPIUrl('check-payment-button-status'),
+                    CURLOPT_RETURNTRANSFER => true,
+                    CURLOPT_ENCODING => '',
+                    CURLOPT_MAXREDIRS => 10,
+                    CURLOPT_TIMEOUT => 0,
+                    CURLOPT_FOLLOWLOCATION => true,
+                    CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+                    CURLOPT_CUSTOMREQUEST => 'GET',
+                    CURLOPT_USERAGENT => $this->getUserAgent(),
+                    CURLOPT_HTTPHEADER => array(
+                        'Accept: application/json',
+                        'Content-Type: application/json',
+                        'Authorization: Bearer ' . $this->apiKey,
+                    ),
                 ));
                 $response = curl_exec($curl);
                 if ($response){
@@ -1636,12 +1741,12 @@ function woocommerceUpaymentsInit() {
                             $payment_methods["result"] = 'success';
                         }else{
                             wc_clear_notices();
-                            wc_add_notice(__("UPayments : " . $result["message"] , $this->domain) , $notice_type = "error");
+                            wc_add_notice(__("UPayments : " . $result["message"] , $this->id) , "error");
                             return ["result" => "failure", "redirect" => wc_get_checkout_url() , ];
                         }
                     } else {
                         wc_clear_notices();
-                        wc_add_notice(__("Error from UPayments : Please Contact support to whitelist your IP" , $this->domain) , $notice_type = "error");
+                        wc_add_notice(__("Error from UPayments : Please Contact support to whitelist your IP" , $this->id) , "error");
                         return ["result" => "failure", "redirect" => wc_get_checkout_url() , ];
                     }
                 }
@@ -1660,7 +1765,6 @@ function woocommerceUpaymentsInit() {
                 curl_setopt_array($curl, [
                     CURLOPT_URL => $this->getAPIUrl('retrieve-customer-cards'),
                     CURLOPT_RETURNTRANSFER => true,
-                    CURLOPT_SSL_VERIFYPEER => false,
                     CURLOPT_USERAGENT => $this->getUserAgent(),
                     CURLOPT_ENCODING => "",
                     CURLOPT_MAXREDIRS => 10,
@@ -1669,7 +1773,7 @@ function woocommerceUpaymentsInit() {
                     CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
                     CURLOPT_CUSTOMREQUEST => "POST",
                     CURLOPT_POSTFIELDS => $params,
-                    CURLOPT_HTTPHEADER => ["Accept: application/json", "Content-Type: application/json", "Authorization: Bearer " . $this->apiKey], 
+                    CURLOPT_HTTPHEADER => ["Accept: application/json", "Content-Type: application/json", "Authorization: Bearer " . $this->apiKey],
                 ]);
 
                 $response = curl_exec($curl);
@@ -1685,71 +1789,123 @@ function woocommerceUpaymentsInit() {
             return $savedCards;
         }
 
-        public function getPaymentIcons()
+        public function getPaymentIcons(): ?array
         {
             $data = $this->getUpayPaymentMethods();
-            // Admin toggle (feature on/off)
-            $isSubscriptionFeatureEnabled = ($this->autoDeduction === 'yes');
 
-            // Cart state
-            $hasSubscriptionProduct = \UPayments\Subscription\Helpers\Utils::cartHasCustomType();
-            $hasNormalProduct      = \UPayments\Subscription\Helpers\Utils::cartHasNormalProduct();
+            if (($data['result'] ?? '') === 'failure' || empty($data['payButtons'])) {
+                return null;
+            }
 
-            // Subscription context = feature enabled AND subscription product in cart
-            $isSubscriptionContext = $isSubscriptionFeatureEnabled && $hasSubscriptionProduct && !$hasNormalProduct;
+            $payment_methods = $data['payButtons'];
 
-            if ($data['result'] !== 'failure') {
-                $payment_methods = $data['payButtons'];
-                $whitelabled     = $data['isWhiteLabel'];
-                $methods         = [];
+            // Subscription context: feature enabled AND custom type in cart AND NO normal products
+            $isSubscriptionContext = ($this->autoDeduction === 'yes')
+                && Utils::cartHasCustomType()
+                && !Utils::cartHasNormalProduct();
 
-                // If ONLY normal products in cart → allow all methods
-                if (!$isSubscriptionContext) {
-                    if ($payment_methods['knet'] == 1) {
-                        $methods['payment']['knet'] = __('KNET', $this->domain);
-                    }
+            // Map button keys to their display names
+            $availableMethods = [
+                'knet'           => ['key' => 'knet',           'title' => __('KNET', $this->id)],
+                'apple_pay_knet' => ['key' => 'apple-pay-knet', 'title' => __('Apple Pay KNET', $this->id)],
+                'credit_card'    => ['key' => 'cc',             'title' => __('Credit Card', $this->id)],
+                'apple_pay'      => ['key' => 'apple-pay',      'title' => __('Apple Pay Credit Card', $this->id)],
+                'samsung_pay'    => ['key' => 'samsung-pay',    'title' => __('Samsung Pay', $this->id)],
+                'google_pay'     => ['key' => 'google-pay',     'title' => __('Google Pay', $this->id)],
+            ];
 
-                    if (!empty($payment_methods['apple_pay_knet']) && $payment_methods['apple_pay_knet'] == 1) {
-                        $methods['payment']['apple-pay-knet'] = __('Apple Pay KNET', $this->domain);
-                    }
+            $methods = ['payment' => []];
 
-                    if ($payment_methods['credit_card'] == 1) {
-                        $methods['payment']['cc'] = __('Credit Card', $this->domain);
-                    }
-
-                    if ($payment_methods['apple_pay'] == 1) {
-                        $methods['payment']['apple-pay'] = __('Apple Pay Credit Card', $this->domain);
-                    }
-
-                    if ($payment_methods['samsung_pay'] == 1) {
-                        $methods['payment']['samsung-pay'] = __('Samsung Pay', $this->domain);
-                    }
-
-                    if ($payment_methods['google_pay'] == 1) {
-                        $methods['payment']['google-pay'] = __('Google Pay', $this->domain);
-                    }
-                }else{ // If subscription product in cart → ONLY CC allowed (per API requirement)
-                    if ($payment_methods['credit_card'] == 1) {
-                        $methods['payment']['cc'] = __('Credit Card', $this->domain);
-                    }
+            foreach ($availableMethods as $method => $info) {
+                // If subscription context, restrict to credit card only
+                if ($isSubscriptionContext && $method !== 'credit_card') {
+                    continue;
                 }
-                $methods['whitelabled'] = $whitelabled;
-                return $methods;
-            }            
+
+                // Add method if enabled in API response
+                if (!empty($payment_methods[$method]) && $payment_methods[$method] == 1) {
+                    $methods['payment'][$info['key']] = $info['title'];
+                }
+            }
+
+            $methods['whitelabled'] = $data['isWhiteLabel'] ?? false;
+
+            return $methods;
         }
 
-        public function log($content)
+        /**
+         * Write log entries to WooCommerce protected log storage
+         *
+         * @param mixed $message
+         * @param mixed $data
+         * @return void
+         */
+        public function log($message, $data = null)
         {
-            $debug = $this->debug;
-            if ($debug)
-            {
-                $file = UP_PLUGIN_PATH . "debug.log";
-                $fp = fopen($file, "a+");
-                fwrite($fp, "\n");
-                fwrite($fp, date("Y-m-d H:i:s") . ": ");
-                fwrite($fp, print_r($content, true));
-                fclose($fp);
+            // Retrieve setting dynamically if $this->debug is not set
+            $debug_enabled = isset($this->debug) ? $this->debug : $this->get_option('debug');
+
+            // Accept both string 'yes', '1', 'on', or boolean true
+            if (!in_array($debug_enabled, ['yes', '1', 'on', true], true)) {
+                return;
             }
+
+            if (!function_exists('wc_get_logger')) {
+                return;
+            }
+
+            $logger  = wc_get_logger();
+            $context = ['source' => 'upayments-gateway'];
+
+            // Format message if an array or object was passed as first parameter
+            if (!is_string($message)) {
+                $message = print_r($this->redactSensitiveData($message), true);
+            }
+
+            if ($data !== null) {
+                $safe_data = $this->redactSensitiveData($data);
+                $message  .= ' | Payload: ' . print_r($safe_data, true);
+            }
+
+            $logger->info($message, $context);
+        }
+
+        /**
+         * Recursively scrub sensitive customer details, tokens, and credentials from log data.
+         *
+         * @param mixed $data
+         * @return mixed
+         */
+        private function redactSensitiveData($data)
+        {
+            if (is_array($data)) {
+                $sensitive_keys = [
+                    'api_key', 'apikey', 'secret', 'password', 'token',
+                    'email', 'phone', 'mobile', 'name', 'customer_name',
+                    'card_number', 'cvv', 'billing_address'
+                ];
+
+                foreach ($data as $key => $value) {
+                    $is_sensitive = false;
+
+                    foreach ($sensitive_keys as $sensitive_key) {
+                        if (stripos((string) $key, $sensitive_key) !== false) {
+                            $is_sensitive = true;
+                            break;
+                        }
+                    }
+
+                    if ($is_sensitive) {
+                        $data[$key] = '***REDACTED***';
+                    } elseif (is_array($value) || is_object($value)) {
+                        $data[$key] = $this->redactSensitiveData((array) $value);
+                    }
+                }
+            } elseif (is_string($data) && isset($this->apiKey) && $data !== '' && $data === $this->apiKey) {
+                return '***REDACTED***';
+            }
+
+            return $data;
         }
         
         /**
@@ -1762,7 +1918,7 @@ function woocommerceUpaymentsInit() {
             // Always load classes (they self-check enable flag)
             require_once __DIR__ . '/includes/Subscription/Checkout/Fields.php';
             require_once __DIR__ . '/includes/Subscription/Manager.php';
-            require_once __DIR__ . '/includes/Subscription/Helpers/Utils.php';            
+            require_once __DIR__ . '/includes/Subscription/Helpers/Utils.php';
             Fields::init();
             Manager::init();
         }
@@ -1839,15 +1995,15 @@ function woocommerceUpaymentsInit() {
                 return;
             }
 
-            $SubscriptionStatus = $order->get_meta('_upay_subscription_status');
-            if($SubscriptionStatus === 'active') {
-                $SubscriptionStatus = '<span class="upay-status-active">'. ucfirst($SubscriptionStatus) .'</span>';
-            } elseif($SubscriptionStatus === 'paused') {
-                $SubscriptionStatus = '<span class="upay-status-paused">'. ucfirst($SubscriptionStatus) .'</span>';
-                } elseif($SubscriptionStatus === 'cancelled') {
-                $SubscriptionStatus = '<span class="upay-status-cancelled">'. ucfirst($SubscriptionStatus) .'</span>';
+            $subscriptionStatus = $order->get_meta('_upay_subscription_status');
+            if($subscriptionStatus === 'active') {
+                $subscriptionStatus = '<span class="upay-status-active">'. ucfirst($subscriptionStatus) .'</span>';
+            } elseif($subscriptionStatus === 'paused') {
+                $subscriptionStatus = '<span class="upay-status-paused">'. ucfirst($subscriptionStatus) .'</span>';
+                } elseif($subscriptionStatus === 'cancelled') {
+                $subscriptionStatus = '<span class="upay-status-cancelled">'. ucfirst($subscriptionStatus) .'</span>';
             } else {
-                $SubscriptionStatus = ucfirst($SubscriptionStatus);
+                $subscriptionStatus = ucfirst($subscriptionStatus);
             }
 
             if (!$plan || $plan === 'one_time') {
@@ -1866,19 +2022,19 @@ function woocommerceUpaymentsInit() {
             }
 
             echo '<div class="upay-subscription-summary">';
-            echo '<h4>' . esc_html__('Subscription Details', 'upayments') . '</h4>';
+            echo '<h4>' . esc_html__('Subscription Details', $this->id) . '</h4>';
             if($autoDeduction === 'no'){
-                echo '<p><strong>Subscription Status:</strong> ' . wp_kses_post($SubscriptionStatus) . '</p>';
+                echo '<p><strong>Subscription Status:</strong> ' . wp_kses_post($subscriptionStatus) . '</p>';
             }
             echo '<p><strong>Plan:</strong> ' . esc_html(ucfirst($plan)) . '</p>';
             echo '<p><strong>Interval:</strong> Every ' . esc_html($interval) . ' ' . esc_html($period) . '(s)</p>';
             if($autoDeduction === 'yes' && empty($last_billed_dt)) {
                 echo '<p><strong>Auto Deduction Order:</strong> Yes</p>';
             } else {
-                if($SubscriptionStatus !== 'cancelled') {
+                if($subscriptionStatus !== 'cancelled') {
                     echo '<p><strong>Next Billing Date:</strong> ' . esc_html($next_billing_dt->format('Y-m-d H:i:s')) . '</p>';
                 }
-                if(!empty($last_billed_dt)){ 
+                if(!empty($last_billed_dt)){
                     echo '<p><strong>Last Billed at:</strong> ' . esc_html($last_billed_dt->format('Y-m-d H:i:s')) . '</p>';
                 }
             }
@@ -1895,25 +2051,21 @@ function woocommerceUpaymentsInit() {
          */
         public function restrictMixedCartProducts($passed, $product_id, $quantity)
         {
-            if (!function_exists('WC') || !WC()->cart) {
-                return $passed;
-            }
-
             $product = wc_get_product($product_id);
-            if (!$product) {
+            if (!function_exists('WC') || !WC()->cart || !$product) {
                 return $passed;
             }
 
             $is_subscription_product = ($product->get_type() === 'custom_type');
 
             // Current cart state
-            $cart_has_subscription = \UPayments\Subscription\Helpers\Utils::cartHasCustomType();
-            $cart_has_normal       = \UPayments\Subscription\Helpers\Utils::cartHasNormalProduct();
+            $cart_has_subscription = Utils::cartHasCustomType();
+            $cart_has_normal       = Utils::cartHasNormalProduct();
 
             // If cart already has subscription product, block adding normal products
             if ($cart_has_subscription && !$is_subscription_product) {
                 wc_add_notice(
-                    __('You can only add subscription products to the cart when a subscription item is present.', $this->domain),
+                    __('You can only add subscription products to the cart when a subscription item is present.', $this->id),
                     'error'
                 );
                 return false;
@@ -1922,7 +2074,7 @@ function woocommerceUpaymentsInit() {
             // If cart already has normal products, block adding subscription products
             if ($cart_has_normal && $is_subscription_product) {
                 wc_add_notice(
-                    __('Subscription products cannot be added together with normal products. Please complete your current purchase first.', $this->domain),
+                    __('Subscription products cannot be added together with normal products. Please complete your current purchase first.', $this->id),
                     'error'
                 );
                 return false;
@@ -1957,8 +2109,10 @@ function woocommerceUpaymentsInit() {
         function($order) {
             foreach ($order->get_items('line_item') as $item)
             {
-                $product = $item->get_product();
-                if($product->get_type() === 'custom_type'){
+                $product = is_object($item) && method_exists($item, 'get_product')
+                    ? $item->get_product()
+                    : (is_array($item) ? $order->get_product_from_item($item) : false);
+                if ($product && is_object($product) && method_exists($product, 'get_type') && $product->get_type() === 'custom_type') {
                     $gateway = new WC_Upayments();
                     $gateway->render_subscription_summary($order);
                 }
@@ -2471,31 +2625,31 @@ add_action('init', function () {
 
         // Security checks
         if (!is_user_logged_in() || get_current_user_id() !== $order->get_user_id()) {
-            wc_add_notice(__('Unauthorized request.', 'woocommerce'), 'error');
+            wc_add_notice(__('Unauthorized request.', 'upayments'), 'error');
             wp_safe_redirect(wc_get_account_endpoint_url('orders'));
             exit;
         }
 
         if($action === 'unsubscribe'){
             if (!wp_verify_nonce($_GET['_wpnonce'], 'upay_unsubscribe_' . $order_id)) {
-                wc_add_notice(__('Invalid request.', 'woocommerce'), 'error');
+                wc_add_notice(__('Invalid request.', 'upayments'), 'error');
                 wp_safe_redirect(wc_get_account_endpoint_url('orders'));
                 exit;
             }
     
             // Mark subscription as cancelled
             $order->update_meta_data('_upay_subscription_status', 'cancelled');
-            wc_add_notice(__('Your subscription has been cancelled.', 'woocommerce'), 'success');
+            wc_add_notice(__('Your subscription has been cancelled.', 'upayments'), 'success');
         }
         
         if ($action === 'pause') {
             $order->update_meta_data('_upay_subscription_status', 'paused');
-            wc_add_notice(__('Subscription paused.', 'woocommerce'), 'success');
+            wc_add_notice(__('Subscription paused.', 'upayments'), 'success');
         }
 
         if ($action === 'resume') {
             $order->update_meta_data('_upay_subscription_status', 'active');
-            wc_add_notice(__('Subscription resumed.', 'woocommerce'), 'success');
+            wc_add_notice(__('Subscription resumed.', 'upayments'), 'success');
         }
 
         $order->save();
@@ -2508,4 +2662,49 @@ add_action('upay_hourly_cron_job', 'runCustomCron');
 function runCustomCron() {    
     error_log('cron Execution started at ' . current_time('Y-m-d H:i:s'));
     do_action('upay_process_subscriptions');
+}
+
+/**
+ * Output hidden device profiling fields on the checkout page.
+ */
+add_action('woocommerce_after_order_notes', 'upaymentsAddDeviceFields');
+function upaymentsAddDeviceFields() {
+    ?>
+    <input type="hidden" name="upay_screen_width" id="upay_screen_width" value="" />
+    <input type="hidden" name="upay_screen_height" id="upay_screen_height" value="" />
+    <input type="hidden" name="upay_color_depth" id="upay_color_depth" value="" />
+    <input type="hidden" name="upay_timezone_offset" id="upay_timezone_offset" value="" />
+    <input type="hidden" name="upay_java_enabled" id="upay_java_enabled" value="" />
+    <input type="hidden" name="upay_browser_language" id="upay_browser_language" value="" />
+
+    <script type="text/javascript">
+        (function() {
+            function populateDeviceData() {
+                var width = document.getElementById('upay_screen_width');
+                if (width) width.value = window.screen.width || '';
+
+                var height = document.getElementById('upay_screen_height');
+                if (height) height.value = window.screen.height || '';
+
+                var depth = document.getElementById('upay_color_depth');
+                if (depth) depth.value = window.screen.colorDepth || '';
+
+                var tz = document.getElementById('upay_timezone_offset');
+                if (tz) tz.value = new Date().getTimezoneOffset() || '';
+
+                var java = document.getElementById('upay_java_enabled');
+                if (java) java.value = (navigator.javaEnabled && navigator.javaEnabled()) ? 'true' : 'false';
+
+                var lang = document.getElementById('upay_browser_language');
+                if (lang) lang.value = navigator.language || navigator.userLanguage || 'en';
+            }
+
+            if (document.readyState === 'complete' || document.readyState === 'interactive') {
+                populateDeviceData();
+            } else {
+                document.addEventListener('DOMContentLoaded', populateDeviceData);
+            }
+        })();
+    </script>
+    <?php
 }

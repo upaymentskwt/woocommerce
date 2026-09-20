@@ -11,36 +11,36 @@
 defined( 'ABSPATH' ) || exit;
 ?>
 <div class="form-row form-row-wide">
-    <?php 
+    <?php
     echo $gateway->description;
     if (isset($_REQUEST["cancelled"]))
-    { 
+    {
     ?>
     <script>
-        let message = '<div class="woocommerce-NoticeGroup woocommerce-NoticeGroup-checkout"><div class="woocommerce-error alert-color"><?php echo __("Payment canceled by customer", $gateway->domain); ?></div></div>';
+        let message = '<div class="woocommerce-NoticeGroup woocommerce-NoticeGroup-checkout"><div class="woocommerce-error alert-color"><?php echo __("Payment canceled by customer", 'upayments'); ?></div></div>';
         jQuery(document).ready(function(){
             jQuery('.woocommerce-notices-wrapper:first').html(message);
         });
     </script>
     <?php
-    } elseif (isset($_REQUEST["failed"])) { 
+    } elseif (isset($_REQUEST["failed"])) {
     ?>
     <script>
-        let message = '<div class="woocommerce-NoticeGroup woocommerce-NoticeGroup-checkout"><div class="woocommerce-error alert-color"><?php echo __("Payment error from UPayments", $gateway->domain); ?></div></div>';
+        let message = '<div class="woocommerce-NoticeGroup woocommerce-NoticeGroup-checkout"><div class="woocommerce-error alert-color"><?php echo __("Payment error from UPayments", 'upayments'); ?></div></div>';
         jQuery(document).ready(function(){
             jQuery('.woocommerce-notices-wrapper:first').html(message);
         });
     </script>
     <?php
-    } elseif (isset($_REQUEST["suspected"])){ 
+    } elseif (isset($_REQUEST["suspected"])){
     ?>
     <script>
-        let message = '<div class="woocommerce-NoticeGroup woocommerce-NoticeGroup-checkout"><div class="woocommerce-error alert-color"><?php echo __("Payment failed for suspected fraud.", $gateway->domain); ?></div></div>';
+        let message = '<div class="woocommerce-NoticeGroup woocommerce-NoticeGroup-checkout"><div class="woocommerce-error alert-color"><?php echo __("Payment failed for suspected fraud.", 'upayments'); ?></div></div>';
         jQuery(document).ready(function(){
             jQuery('.woocommerce-notices-wrapper:first').html(message);
         });
     </script>
-    <?php 
+    <?php
     }
     $icons = null;
     $whitelabled = false;
@@ -89,7 +89,7 @@ defined( 'ABSPATH' ) || exit;
                 </li>
             <?php
                 }
-            } 
+            }
             ?>
         </ul>
     <?php
