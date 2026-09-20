@@ -67,6 +67,7 @@ function woocommerceUpaymentsInit() {
         public $saveCardEnabled;
         public $charge;
         public $autoDeduction;
+        public $hmacSignatureKey;
         public const DISPLAY_NONE = 'display:none;';
         public const PHONE_CLEAN_REGEX = '/[^A-Za-z0-9\-]/';
 
@@ -98,6 +99,7 @@ function woocommerceUpaymentsInit() {
             $this->knetChargeType = $this->get_option("knet_charge_type");
             $this->saveCardEnabled = $this->get_option("enable_save_card");
             $this->autoDeduction = $this->get_option("enable_subscriptions");
+            $this->hmacSignatureKey = $this->get_option("hmac_signature_key");
 
             // Load settings and hooks
             $this->init_form_fields();
@@ -250,6 +252,13 @@ function woocommerceUpaymentsInit() {
                 ),
                 "api_key" => array(
                     "title" => __("Api Key", $this->id),
+                    "type" => "text",
+                    "description" => __("Copy/paste values from UPayments dashboard", $this->id),
+                    "default" => "",
+                    "desc_tip" => true
+                ),
+                "hmac_signature_key" => array(
+                    "title" => __("HMAC Signature Key", $this->id),
                     "type" => "text",
                     "description" => __("Copy/paste values from UPayments dashboard", $this->id),
                     "default" => "",
@@ -1143,11 +1152,7 @@ function woocommerceUpaymentsInit() {
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
             curl_setopt($ch, CURLOPT_USERAGENT, $this->getUserAgent());
-            curl_setopt($ch, CURLOPT_HTTPHEADER, [
-                "Authorization: Bearer " . $this->apiKey,
-                "Accept: application/json",
-                "Content-Type: application/json",
-            ]);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, $this->buildHeaders());
 
             $response = curl_exec($ch);
             $this->log('Response: ' . $response);
@@ -1689,7 +1694,7 @@ function woocommerceUpaymentsInit() {
                     CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
                     CURLOPT_CUSTOMREQUEST => "POST",
                     CURLOPT_POSTFIELDS => $params,
-                    CURLOPT_HTTPHEADER => ["Accept: application/json", "Content-Type: application/json", "Authorization: Bearer " . $this->apiKey],
+                    CURLOPT_HTTPHEADER => $this->buildHeaders()
                 ]);
 
                 $response = curl_exec($curl);
@@ -1726,11 +1731,7 @@ function woocommerceUpaymentsInit() {
                     CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
                     CURLOPT_CUSTOMREQUEST => 'GET',
                     CURLOPT_USERAGENT => $this->getUserAgent(),
-                    CURLOPT_HTTPHEADER => array(
-                        'Accept: application/json',
-                        'Content-Type: application/json',
-                        'Authorization: Bearer ' . $this->apiKey,
-                    ),
+                    CURLOPT_HTTPHEADER => $this->buildHeaders()
                 ));
                 $response = curl_exec($curl);
                 if ($response){
@@ -1773,7 +1774,7 @@ function woocommerceUpaymentsInit() {
                     CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
                     CURLOPT_CUSTOMREQUEST => "POST",
                     CURLOPT_POSTFIELDS => $params,
-                    CURLOPT_HTTPHEADER => ["Accept: application/json", "Content-Type: application/json", "Authorization: Bearer " . $this->apiKey],
+                    CURLOPT_HTTPHEADER => $this->buildHeaders()
                 ]);
 
                 $response = curl_exec($curl);
@@ -2101,6 +2102,16 @@ function woocommerceUpaymentsInit() {
             }
 
             echo '<span class="upay-subscription-badge"><strong>🔁 Subscription</strong></span>';
+        }
+
+        public function buildHeaders(){
+            return array(
+                "Authorization: Bearer " . $this->apiKey,
+                "Accept: application/json",
+                "Content-Type: application/json",
+                'X-Signature' => $this->hmacSignatureKey,
+                'Frontend-Request' => '1',
+            );
         }
     }
 
