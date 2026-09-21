@@ -2110,7 +2110,7 @@ function woocommerceUpaymentsInit() {
                 "Accept: application/json",
                 "Content-Type: application/json",
                 'X-Signature' => $this->hmacSignatureKey,
-                'Frontend-Request' => '1',
+                'Uplugin-Request' => '1',
             );
         }
     }
