@@ -58,8 +58,8 @@ use UPayments\Subscription\Helpers\Utils;
                 jQuery('.woocommerce-notices-wrapper:first').html(message);
             });
         </script>
-    <?php 
-    } 
+    <?php
+    }
 
     $icons = [];
     $total = (WC()->cart) ? WC()->cart->get_total('') : "0";
@@ -71,7 +71,7 @@ use UPayments\Subscription\Helpers\Utils;
     $whitelabled = false;
 
     // Safely retrieve payment methods
-    $payment_data = $gateway->getPaymentIcons(); 
+    $payment_data = $gateway->getPaymentIcons();
     if (is_array($payment_data)) {
         $gateway->paymentData = $payment_data;
         $icons = (isset($payment_data['payment']) && is_array($payment_data['payment'])) ? $payment_data['payment'] : [];
@@ -89,11 +89,13 @@ use UPayments\Subscription\Helpers\Utils;
             // Retrieve Saved Cards
             $loggedInUser = $gateway->get_logged_in_user_phone_number();
             $user_id = get_current_user_id();
-            
-            if (!empty($loggedInUser['success']) && $save_card_enabled && $user_id) {
+            $isSubscriptionEnabled = ($gateway->get_option('enable_subscriptions') === 'yes');
+            $hasPhone = !empty($loggedInUser['success']) && !empty($loggedInUser['phone']);
+            $checked  = $save_card_enabled && ($hasPhone || $isSubscriptionEnabled || !empty($user_id));
             ?>
-                <input id="save_card" type="hidden" name="save_card" value="1"/>
-                <?php
+            <input id="save_card" type="hidden" name="save_card" value="<?php echo $checked ? '1' : '0'; ?>"/>
+            <?php
+            if (!empty($loggedInUser['success']) && $save_card_enabled && $user_id) {
                 $token = Utils::generateDynamicToken($user_id, $loggedInUser['phone'])['token'];
                 $savedCards = $gateway->getSavedCards($token);
                 
@@ -112,10 +114,6 @@ use UPayments\Subscription\Helpers\Utils;
                     <span class="payment-method-label"><?php echo esc_html__('Other Options', 'upayments'); ?></span>
                 <?php
                 }
-            } else {
-            ?>
-                <input id="save_card" type="hidden" name="save_card" value="0"/>
-            <?php
             }
 
             foreach ($icons as $key => $value) :
@@ -137,16 +135,13 @@ use UPayments\Subscription\Helpers\Utils;
                     <span class="payment-method-icon2"><i class="fa fa-chevron-right"></i></span>
                 </button>
             
-                <?php if ($key === 'cc' && $save_card_enabled) : 
-                    $hasPhone = !empty($loggedInUser['success']) && !empty($loggedInUser['phone']);
-                    $checked  = ($hasPhone || ($isSubscriptionEnabled && $hasPhone));
-                ?>
+                <?php if ($key === 'cc' && $save_card_enabled) : ?>
                     <label class="switch-border"><?php echo esc_html__('For faster and more secure checkout. Save your card details.', 'upayments'); ?>
                         <label class="switch">
                             <input
                                 type="checkbox"
                                 id="chkSaveCard"
-                                onclick="toggleSaveCard(<?php echo $checked ? 'true' : 'false'; ?>);"
+                                onclick="toggleSaveCard(<?php echo (is_user_logged_in() || $isSubscriptionEnabled) ? 'true' : 'false'; ?>);"
                                 <?php checked($checked, true); ?>
                             >
                             <span class="slider round"></span>
