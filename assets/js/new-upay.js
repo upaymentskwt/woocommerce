@@ -75,11 +75,19 @@ function checkApplePayAvailability() {
 }
 
 function submitUpayButton(buttonValue) {
+    if (jQuery('#chkSaveCard').length > 0) {
+        if (jQuery('#chkSaveCard').is(':checked')) {
+            jQuery('#save_card').val('1');
+        } else {
+            jQuery('#save_card').val('0');
+        }
+    }
     jQuery('#upayment_payment_type').val(buttonValue);
     jQuery('form.checkout').submit();
 }
 
 function submitSavedCard(objButton) {
+    jQuery('#save_card').val('1');
     jQuery('#upayment_payment_type').val('cc');
     jQuery('#card_token').val(objButton.value);
     jQuery('form.checkout').submit();
@@ -95,16 +103,7 @@ function toggleSaveCard(loggedUser) {
         showToast('Please Login to use the Save Card feature.', 3000);
         return;
     }
-    
-    let phone = document.getElementById('billing_phone').value;
-    if (phone === '') {
-        checkbox.checked = false;
-        saveCardInput.val('0');
-        showToast('Please update your mobile number to use the Save Card feature.', 3000);
-        return;
-    }
 
-    // User logged in
     saveCardInput.val(checkbox.checked ? '1' : '0');
 }
 

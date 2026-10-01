@@ -21,30 +21,32 @@ class Fields
     public static function validate()
     {
         $gateway = self::getGateway();
-        $enable_subscription = $gateway->get_option('enable_subscriptions') === 'yes' ? true : false;
-        if ($enable_subscription && empty($_POST['upay_subscription_plan'])) {
+        if (!$gateway || $gateway->get_option('enable_subscriptions') !== 'yes' || Utils::cartHasRestrictedProducts() || !Utils::cartHasCustomType()) {
+            return;
+        }
+
+        if (isset($_POST['payment_method']) && $_POST['payment_method'] !== $gateway->id) {
+            return;
+        }
+
+        if (empty($_POST['upay_subscription_plan'])) {
             wc_add_notice(__('Please select a payment type.', 'upayments'), 'error');
             return;
         }
 
         // One-time payment requires no interval
-        if ($enable_subscription && sanitize_text_field($_POST['upay_subscription_plan']) === 'one_time') {
+        if (sanitize_text_field($_POST['upay_subscription_plan']) === 'one_time') {
             return;
         }
 
-        if ($enable_subscription && empty($_POST['upay_subscription_interval'])) {
+        if (empty($_POST['upay_subscription_interval'])) {
             wc_add_notice(__('Please select a billing interval.', 'upayments'), 'error');
             return;
         }
 
-        if ($enable_subscription && !in_array($_POST['upay_subscription_interval'], ['', '1', '2', '3', '6'], true)) {
+        if (!in_array($_POST['upay_subscription_interval'], ['', '1', '2', '3', '6'], true)) {
             wc_add_notice(__('Invalid billing interval selected.', 'upayments'), 'error');
         }
-
-        //code for additional restrictions can be added here
-        // if (!Utils::cartHasCustomType()) {
-        //     wc_add_notice(__('Subscriptions are not allowed for this product.', 'upayments'), 'error');
-        // }
     }
 
     /**
@@ -79,7 +81,7 @@ class Fields
         $fields['billing']['upay_subscription_interval'] = [
             'type'     => 'select',
             'label'    => __('Billing Interval', 'upayments'),
-            'required' => true,
+            'required' => false,
             'options'  => [
                 ''  => __('Select interval', 'upayments'),
             ],

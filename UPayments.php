@@ -21,6 +21,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 define("UP_PLUGIN_URL", plugin_dir_url(__FILE__));
 define("UP_PLUGIN_PATH", plugin_dir_path(__FILE__));
 define('UPAYMENTS_PLUGIN_FILE', __FILE__ );
+define('DATE_TIME_FORMAT', 'Y-m-d H:i:s');
 
 require_once __DIR__ . '/vendor/plugin-update-checker/plugin-update-checker.php';
 
@@ -600,9 +601,11 @@ function woocommerceUpaymentsInit() {
                     exit();
                 }
 
-                // 5. If Webhook hasn't completed it yet and a payment_id is present, verify via API
-                if (!empty($payment_id) && method_exists($this, 'verifyTransactionWithApi')) {
-                    $verified_data = $this->verifyTransactionWithApi($payment_id, $track_id, $order);
+                // 5. If Webhook hasn't completed it yet, verify via API if possible
+                $verified_data = false;
+                $ref_id = !empty($track_id) ? $track_id : $payment_id;
+                if (!empty($ref_id) && method_exists($this, 'verifyTransactionWithApi')) {
+                    $verified_data = $this->verifyTransactionWithApi($ref_id);
                     if ($verified_data && !empty($verified_data['status'])) {
                         $raw_status = strtoupper($verified_data['status']);
                     }
@@ -610,6 +613,38 @@ function woocommerceUpaymentsInit() {
 
                 // 6. Handle redirect flow based on verified status
                 if ($raw_status === 'CAPTURED' || $raw_status === 'SUCCESS') {
+                    $p_id = (is_array($verified_data) && !empty($verified_data['payment_id'])) ? $verified_data['payment_id'] : $payment_id;
+                    $t_id = (is_array($verified_data) && !empty($verified_data['track_id']))   ? $verified_data['track_id']   : $track_id;
+                    $tr_id = (is_array($verified_data) && !empty($verified_data['tran_id']))  ? $verified_data['tran_id']    : '';
+                    $ref = (is_array($verified_data) && !empty($verified_data['ref']))        ? $verified_data['ref']        : '';
+                    $auth = (is_array($verified_data) && !empty($verified_data['auth']))      ? $verified_data['auth']       : '';
+
+                    $order->update_meta_data('UPayments_Result', $raw_status);
+                    $order->update_meta_data('UPayments_PaymentID', $p_id);
+                    $order->update_meta_data('UPayments_TrackID', $t_id);
+                    $order->update_meta_data('UPayments_TranID', $tr_id);
+                    $order->update_meta_data('UPayments_Ref', $ref);
+                    $order->update_meta_data('UPayments_Auth', $auth);
+                    $order->update_meta_data('UPayments_PostDate', current_time('mysql'));
+                    $order->update_meta_data('_payment_method_title', 'UPayments');
+
+                    // Set transaction ID, decrement stock, and trigger completion logic
+                    $order->payment_complete($p_id);
+
+                    // Add verified note to order history
+                    $order->add_order_note(
+                        sprintf(__('Payment verified successfully via UPayments return URL. PaymentID: %s, TranID: %s', $this->id), 
+                        $p_id, 
+                        !empty($tr_id) ? $tr_id : 'N/A')
+                    );
+
+                    // If merchant explicitly requested auto-completion
+                    if ($this->getIsOrderComplete() && $order->get_status() !== 'completed') {
+                        $order->update_status('completed', __('Order auto-completed as configured in gateway settings.', $this->id));
+                    }
+
+                    $order->save();
+
                     if (function_exists('WC') && WC()->cart) {
                         WC()->cart->empty_cart();
                     }
@@ -691,7 +726,8 @@ function woocommerceUpaymentsInit() {
 
             try {
                 // 4. Query UPayments API directly (Server-to-Server)
-                $verified_data = $this->verifyTransactionWithApi($payment_id, $track_id, $order);
+                $ref_id = !empty($track_id) ? $track_id : $payment_id;
+                $verified_data = $this->verifyTransactionWithApi($ref_id);
 
                 if (!$verified_data || empty($verified_data['status'])) {
                     $this->log("API Verification Failed for Order #{$order_id}");
@@ -756,8 +792,8 @@ function woocommerceUpaymentsInit() {
                         $verified_data['tran_id'] ?? 'N/A')
                     );
 
-                    // If merchant explicitly requested auto-completion and order doesn't require physical fulfilment
-                    if ($this->getIsOrderComplete() && $order->needs_processing() === false && $order->get_status() !== 'completed') {
+                    // If merchant explicitly requested auto-completion
+                    if ($this->getIsOrderComplete() && $order->get_status() !== 'completed') {
                         $order->update_status('completed', __('Order auto-completed as configured in gateway settings.', $this->id));
                     }
 
@@ -799,40 +835,34 @@ function woocommerceUpaymentsInit() {
          * @param WC_Order $order
          * @return array|false
          */
-        private function verifyTransactionWithApi(string $payment_id, string $track_id)
+        private function verifyTransactionWithApi(string $track_id)
         {
-            $api_url = trailingslashit($this->getApiUrl()) . 'get-payment-status';
-
-            $payload = [
-                'track_id'   => $track_id,
-                'payment_id' => $payment_id,
-            ];
-
-            $response = wp_remote_post($api_url, [
-                'method'      => 'POST',
-                'timeout'     => 15,
-                'redirection' => 5,
-                'httpversion' => '1.1',
-                'blocking'    => true,
-                'headers'     => [
-                    'Authorization' => 'Bearer ' . $this->apiKey,
-                    'Content-Type'  => 'application/json',
-                    'Accept'        => 'application/json',
-                ],
-                'body'        => wp_json_encode($payload),
-            ]);
-
-            if (is_wp_error($response)) {
-                $this->log('API Status Check WP_Error: ' . $response->get_error_message());
+            if (empty($track_id)) {
                 return false;
             }
+            $curl = curl_init();
+            curl_setopt_array($curl,
+            [
+                CURLOPT_URL => $this->getAPIUrl('get-payment-status/'. $track_id),
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_USERAGENT => $this->getUserAgent(),
+                CURLOPT_ENCODING => "",
+                CURLOPT_MAXREDIRS => 10,
+                CURLOPT_TIMEOUT => 0,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+                CURLOPT_CUSTOMREQUEST => "GET",
+                CURLOPT_HTTPHEADER => $this->buildHeaders(),
+                CURLOPT_SSL_VERIFYHOST => $this->verifyHost(),
+                CURLOPT_SSL_VERIFYPEER => $this->verifyHost()
+            ]);
 
-            $response_code = wp_remote_retrieve_response_code($response);
-            $response_body = wp_remote_retrieve_body($response);
-            $data          = json_decode($response_body, true);
+            $response = curl_exec($curl);
 
-            if ($response_code !== 200 || empty($data)) {
-                $this->log("API Verification HTTP {$response_code}: " . $response_body);
+            $data = json_decode($response, true);
+
+            if (empty($data) || !$data['status']) {
+                $this->log("API Verification Error: " . $response);
                 return false;
             }
 
@@ -840,8 +870,8 @@ function woocommerceUpaymentsInit() {
                 'status'     => $data['data']['payment_status'] ?? $data['result'] ?? '',
                 'amount'     => $data['data']['amount'] ?? $data['order']['amount'] ?? 0,
                 'currency'   => $data['data']['currency'] ?? $data['order']['currency'] ?? '',
-                'payment_id' => $data['data']['payment_id'] ?? $payment_id,
-                'track_id'   => $data['data']['track_id'] ?? $track_id,
+                'payment_id' => $data['data']['payment_id'] ?? '',
+                'track_id'   => $data['data']['track_id'] ?? '',
                 'tran_id'    => $data['data']['tran_id'] ?? '',
                 'ref'        => $data['data']['ref'] ?? '',
                 'auth'       => $data['data']['auth'] ?? '',
@@ -999,7 +1029,7 @@ function woocommerceUpaymentsInit() {
                 $src = "knet";
                 $cardToken = null;
                 $isSaveCard = false;
-                $isSaveCardRequested = isset($_POST["save_card"]) && sanitize_text_field($_POST["save_card"]) == 1;
+                $isSaveCardRequested = isset($_POST["save_card"]) && sanitize_text_field($_POST["save_card"]) == 1 ? true : false;
                 if ($whitelabled){
                     $whitelabled = true;
                     $upayment_payment_type = sanitize_text_field($_POST["upayment_payment_type"]);
@@ -1153,9 +1183,10 @@ function woocommerceUpaymentsInit() {
             curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
             curl_setopt($ch, CURLOPT_USERAGENT, $this->getUserAgent());
             curl_setopt($ch, CURLOPT_HTTPHEADER, $this->buildHeaders());
+            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, $this->verifyHost());
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, $this->verifyHost());
 
             $response = curl_exec($ch);
-            $this->log('Response: ' . $response);
             curl_close($ch);
 
             try
@@ -1169,7 +1200,6 @@ function woocommerceUpaymentsInit() {
 
                 }else{
                     $result = json_decode($response, true);
-                    $this->log(__("Create Payment Response:", $this->id));
                     if (!$result){
                         WC()->session->set("refresh_totals", true);
                         wc_add_notice(__("Payment request failed. Empty Response Received.", $this->id) , "error");
@@ -1694,7 +1724,9 @@ function woocommerceUpaymentsInit() {
                     CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
                     CURLOPT_CUSTOMREQUEST => "POST",
                     CURLOPT_POSTFIELDS => $params,
-                    CURLOPT_HTTPHEADER => $this->buildHeaders()
+                    CURLOPT_HTTPHEADER => $this->buildHeaders(),
+                    CURLOPT_SSL_VERIFYHOST => $this->verifyHost(),
+                    CURLOPT_SSL_VERIFYPEER => $this->verifyHost()
                 ]);
 
                 $response = curl_exec($curl);
@@ -1731,9 +1763,12 @@ function woocommerceUpaymentsInit() {
                     CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
                     CURLOPT_CUSTOMREQUEST => 'GET',
                     CURLOPT_USERAGENT => $this->getUserAgent(),
-                    CURLOPT_HTTPHEADER => $this->buildHeaders()
+                    CURLOPT_HTTPHEADER => $this->buildHeaders(),
+                    CURLOPT_SSL_VERIFYHOST => $this->verifyHost(),
+                    CURLOPT_SSL_VERIFYPEER => $this->verifyHost()
                 ));
                 $response = curl_exec($curl);
+                $this->log("Response Payment Methods: ". $response);
                 if ($response){
                     $result = json_decode($response, true);
                     if($result){
@@ -1774,7 +1809,9 @@ function woocommerceUpaymentsInit() {
                     CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
                     CURLOPT_CUSTOMREQUEST => "POST",
                     CURLOPT_POSTFIELDS => $params,
-                    CURLOPT_HTTPHEADER => $this->buildHeaders()
+                    CURLOPT_HTTPHEADER => $this->buildHeaders(),
+                    CURLOPT_SSL_VERIFYHOST => $this->verifyHost(),
+                    CURLOPT_SSL_VERIFYPEER => $this->verifyHost()
                 ]);
 
                 $response = curl_exec($curl);
@@ -1845,19 +1882,11 @@ function woocommerceUpaymentsInit() {
         {
             // Retrieve setting dynamically if $this->debug is not set
             $debug_enabled = isset($this->debug) ? $this->debug : $this->get_option('debug');
-
-            // Accept both string 'yes', '1', 'on', or boolean true
-            if (!in_array($debug_enabled, ['yes', '1', 'on', true], true)) {
+            
+            if (!in_array($debug_enabled, ['yes', '1', 'on', true])) {
                 return;
             }
-
-            if (!function_exists('wc_get_logger')) {
-                return;
-            }
-
-            $logger  = wc_get_logger();
-            $context = ['source' => 'upayments-gateway'];
-
+            
             // Format message if an array or object was passed as first parameter
             if (!is_string($message)) {
                 $message = print_r($this->redactSensitiveData($message), true);
@@ -1868,7 +1897,12 @@ function woocommerceUpaymentsInit() {
                 $message  .= ' | Payload: ' . print_r($safe_data, true);
             }
 
-            $logger->info($message, $context);
+            $file = UP_PLUGIN_PATH . "debug.log";
+            $fp = fopen($file, "a+");
+            fwrite($fp, "\n");
+            fwrite($fp, date(DATE_TIME_FORMAT) . ": ");
+            fwrite($fp, print_r($message, true));
+            fclose($fp);
         }
 
         /**
@@ -2033,10 +2067,10 @@ function woocommerceUpaymentsInit() {
                 echo '<p><strong>Auto Deduction Order:</strong> Yes</p>';
             } else {
                 if($subscriptionStatus !== 'cancelled') {
-                    echo '<p><strong>Next Billing Date:</strong> ' . esc_html($next_billing_dt->format('Y-m-d H:i:s')) . '</p>';
+                    echo '<p><strong>Next Billing Date:</strong> ' . esc_html($next_billing_dt->format('DATE_TIME_FORMAT')) . '</p>';
                 }
                 if(!empty($last_billed_dt)){
-                    echo '<p><strong>Last Billed at:</strong> ' . esc_html($last_billed_dt->format('Y-m-d H:i:s')) . '</p>';
+                    echo '<p><strong>Last Billed at:</strong> ' . esc_html($last_billed_dt->format('DATE_TIME_FORMAT')) . '</p>';
                 }
             }
             echo '</div>';
@@ -2109,9 +2143,13 @@ function woocommerceUpaymentsInit() {
                 "Authorization: Bearer " . $this->apiKey,
                 "Accept: application/json",
                 "Content-Type: application/json",
-                'X-Signature' => $this->hmacSignatureKey,
-                'Uplugin-Request' => '1',
+                'X-Signature: ' . $this->hmacSignatureKey,
+                'Uplugin-Request: ' . '1',
             );
+        }
+
+        public function verifyHost(){
+            return $this->getMode() ? false : true;
         }
     }
 
@@ -2499,16 +2537,16 @@ add_action('woocommerce_order_details_after_order_table', function ($order) {
                 </tr>
                 <tr>
                     <th style="border: 1px solid;"><?php esc_html_e('Started On', 'woocommerce'); ?></th>
-                    <td style="border: 1px solid;"><?php echo esc_html($started_at ? $started_at->format('Y-m-d H:i:s') : '-'); ?></td>
+                    <td style="border: 1px solid;"><?php echo esc_html($started_at ? $started_at->format('DATE_TIME_FORMAT') : '-'); ?></td>
                 </tr>
                 <?php if(!$isAutoDeduction) { ?>
                     <tr>
                         <th style="border: 1px solid;"><?php esc_html_e('Last Billed On', 'woocommerce'); ?></th>
-                        <td style="border: 1px solid;"><?php echo esc_html($last_billed_dt ? $last_billed_dt->format('Y-m-d H:i:s') : '-'); ?></td>
+                        <td style="border: 1px solid;"><?php echo esc_html($last_billed_dt ? $last_billed_dt->format('DATE_TIME_FORMAT') : '-'); ?></td>
                     </tr>
                     <tr>
                         <th style="border: 1px solid;"><?php esc_html_e('Next Billing Date', 'woocommerce'); ?></th>
-                        <td style="border: 1px solid;"><?php echo esc_html($next_billing_dt ? $next_billing_dt->format('Y-m-d H:i:s') : '-'); ?></td>
+                        <td style="border: 1px solid;"><?php echo esc_html($next_billing_dt ? $next_billing_dt->format('DATE_TIME_FORMAT') : '-'); ?></td>
                     </tr>
                 <?php } ?>
             </tbody>
@@ -2671,7 +2709,7 @@ add_action('init', function () {
 
 add_action('upay_hourly_cron_job', 'runCustomCron');
 function runCustomCron() {    
-    error_log('cron Execution started at ' . current_time('Y-m-d H:i:s'));
+    error_log('cron Execution started at ' . current_time('DATE_TIME_FORMAT'));
     do_action('upay_process_subscriptions');
 }
 
