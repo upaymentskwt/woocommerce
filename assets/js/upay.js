@@ -82,8 +82,9 @@ function submitUpayButton(buttonValue) {
     jQuery('form.checkout').submit();
 }
 
-function submitSavedCard(objButton) {
-    jQuery('#upayment_payment_type').val('cc');
+function submitSavedCard(objButton, paymentType = 'cc') {
+    let type = paymentType || (objButton.getAttribute && objButton.getAttribute('data-payment-type')) || 'cc';
+    jQuery('#upayment_payment_type').val(type);
     jQuery('#card_token').val(objButton.value);
     jQuery('form.checkout').submit();
 }

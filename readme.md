@@ -151,3 +151,7 @@ Supported currency codes are: KWD, SAR, USD, BHD, EUR, OMR, QAR, AED
 = 3.1.2 =
  -Security Vulnerabilities resolved
  -customer unique token updated
+
+= 3.2.0 =
+ -KFAST Support
+ -Security Enhancements Updated

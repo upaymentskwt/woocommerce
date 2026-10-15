@@ -6,7 +6,7 @@ defined('ABSPATH') || exit;
 
 class Utils
 {
-    private static $modulo = 90000000;
+    private static $modulo = 99999999;
     
     public static function isSubscriptionOrder($order)
     {
@@ -67,7 +67,7 @@ class Utils
     }
 
     public static function generateDynamicToken(int $userId, string $mobileNumber): array {
-        if ($userId <= 0 || $userId >= self::$modulo) {
+        if ($userId <= 0 || $userId > self::$modulo) {
             return ['token' => (string)(0)];
         }
         // 1. Clean the mobile number (remove spaces, dashes, country codes if inconsistent)
