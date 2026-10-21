@@ -153,5 +153,6 @@ Supported currency codes are: KWD, SAR, USD, BHD, EUR, OMR, QAR, AED
  -customer unique token updated
 
 = 3.2.0 =
+ -HMAC signature Added
  -KFAST Support
  -Security Enhancements Updated

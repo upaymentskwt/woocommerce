@@ -1750,7 +1750,7 @@ function woocommerceUpaymentsInit() {
         {
             $url = PROD_UPAYMENTS . $apiRoute;
             if ($this->getMode()) {
-                $url = STAG_UPAYMENTS . $apiRoute;
+                $url = SANDBOX_UPAYMENTS . $apiRoute;
                 //use below for sandbox
                 // $url = SANDBOX_UPAYMENTS . $apiRoute;
             }
