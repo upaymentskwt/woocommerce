@@ -2242,7 +2242,10 @@ function woocommerceUpaymentsInit() {
         }
 
         public function verifyHost(){
-            return $this->getMode() ? false : 2;
+            return true;
+
+            // for dev testing enable below
+            // return $this->getMode() ? false : 2;
         }
     }
 
