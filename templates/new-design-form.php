@@ -9,6 +9,7 @@
  */
 
 defined( 'ABSPATH' ) || exit;
+use UPayments\Subscription\Helpers\Utils;
 ?>
 <style>
     .wc-toast {
@@ -33,7 +34,7 @@ defined( 'ABSPATH' ) || exit;
 </style>
 <div id="wc-toast" class="wc-toast"></div>
 <div class="form-row form-row-wide">
-    <?php 
+    <?php
     if (isset($_REQUEST["cancelled"])){ ?>
         <script>
             let message = '<div class="woocommerce-NoticeGroup woocommerce-NoticeGroup-checkout"><div class="woocommerce-error alert-color"><?php echo __("Payment canceled by customer", $gateway->domain); ?></div></div>';
@@ -57,8 +58,8 @@ defined( 'ABSPATH' ) || exit;
                 jQuery('.woocommerce-notices-wrapper:first').html(message);
             });
         </script>
-    <?php 
-    } 
+    <?php
+    }
         $icons = null;
         $total = "0";
         $total = WC()->cart->get_total('');
@@ -70,7 +71,7 @@ defined( 'ABSPATH' ) || exit;
         $whitelabled = false;
         // NOTE: The function call was $this->getPaymentIcons() in the original method.
         // Since we are in a template, we use the $gateway variable.
-        $payment_data = $gateway->getPaymentIcons(); 
+        $payment_data = $gateway->getPaymentIcons();
         if($payment_data){
             $gateway->paymentData = $payment_data;
             $icons = $payment_data['payment'];
@@ -82,30 +83,74 @@ defined( 'ABSPATH' ) || exit;
         <div class="payment-buttons">
             <?php
             // Retrieve Saved Cards
-            $loggedInUser = $gateway->get_logged_in_user_phone_number(); // Use $gateway
+            $loggedInUser = $gateway->getLoggedinUserPhoneNumber(); // Use $gateway
             $user_id = get_current_user_id();
             if($loggedInUser['success']  && $save_card_enabled && $user_id) {
             ?>
                 <input id="save_card" type="hidden" name="save_card" value="1"/>
                 <?php
-                $savedCards = $gateway->getSavedCards($loggedInUser['phone'].$user_id); // Use $gateway
-                
-                if($savedCards && $savedCards['result'] == 'success')
+                // Fetch KNET saved cards using dynamic token
+                $knetCardList = [];
+                if (empty($icons) || isset($icons['knet'])) {
+                    $knetTokenData = Utils::generateDynamicToken($user_id, $loggedInUser['phone']);
+                    $knetToken = $knetTokenData['token'] ?? '';
+                    if (!empty($knetToken) && $knetToken !== '0') {
+                        $savedKnetCards = $gateway->getSavedCards($knetToken);
+                        if ($savedKnetCards && isset($savedKnetCards['result']) && $savedKnetCards['result'] === 'success' && !empty($savedKnetCards['data'])) {
+                            foreach ($savedKnetCards['data'] as $card) {
+                                $brand  = strtoupper(trim($card['brand'] ?? ''));
+                                $scheme = strtoupper(trim($card['scheme'] ?? ''));
+                                $token  = trim((string)($card['token'] ?? ''));
+                                // Only accept genuine KNET cards (brand/scheme KNET or 8-digit KFast token)
+                                if ($brand === 'KNET' || $scheme === 'KNET' || (strlen($token) === 8 && ctype_digit($token))) {
+                                    $knetCardList[] = $card;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Fetch CC saved cards
+                $ccCardList = [];
+                if (empty($icons) || isset($icons['cc'])) {
+                    $savedCCCards = $gateway->getSavedCards($loggedInUser['phone'].$user_id);
+                    if ($savedCCCards && isset($savedCCCards['result']) && $savedCCCards['result'] === 'success' && !empty($savedCCCards['data'])) {
+                        foreach ($savedCCCards['data'] as $card) {
+                            $brand  = strtoupper(trim($card['brand'] ?? ''));
+                            $scheme = strtoupper(trim($card['scheme'] ?? ''));
+                            $token  = trim((string)($card['token'] ?? ''));
+                            // Ensure only credit cards are included in CC list
+                            if ($brand !== 'KNET' && $scheme !== 'KNET' && strlen($token) !== 8) {
+                                $ccCardList[] = $card;
+                            }
+                        }
+                    }
+                }
+
+                if (!empty($knetCardList) || !empty($ccCardList))
                 {
-                    $cardList = $savedCards['data'];
                 ?>
                     <span class="payment-method-label">Saved Cards</span>
                     <?php
-                    foreach ($cardList as $cardkey => $cardValue) {
+                    foreach ($knetCardList as $cardkey => $cardValue) {
                     ?>
-
-                        <button type="button" value="<?php echo $cardValue['token'];?>" onclick="submitSavedCard(this)" class="upay-payment-method" id="upay-button-cc">
-                        <span class="payment-method-icon"><img src="<?php echo UP_PLUGIN_URL;?>assets/images/cc.png" alt="<?php echo $cardValue['number'];?>"  title="<?php echo $cardValue['number'];?>"/></span>
-                        <span class="payment-method-label"><?php echo $cardValue['number'];?></span>
+                        <button type="button" value="<?php echo esc_attr($cardValue['token']);?>" onclick="submitSavedCard(this, 'knet')" class="upay-payment-method" id="upay-button-knet" data-payment-type="knet">
+                        <span class="payment-method-icon"><img src="<?php echo UP_PLUGIN_URL;?>assets/images/knet.png" alt="<?php echo esc_attr($cardValue['number']);?>"  title="<?php echo esc_attr($cardValue['number']);?>"/></span>
+                        <span class="payment-method-label"><?php echo esc_html($cardValue['number']);?></span>
                         <span class="payment-method-price"><?php echo $total;?> <?php echo $currency;?></span>
                         <span class="payment-method-icon2"><i class="fa fa-chevron-right"></i></span>
                         </button>
+                    <?php
+                    }
 
+                    foreach ($ccCardList as $cardkey => $cardValue) {
+                    ?>
+                        <button type="button" value="<?php echo esc_attr($cardValue['token']);?>" onclick="submitSavedCard(this, 'cc')" class="upay-payment-method" id="upay-button-cc" data-payment-type="cc">
+                        <span class="payment-method-icon"><img src="<?php echo UP_PLUGIN_URL;?>assets/images/cc.png" alt="<?php echo esc_attr($cardValue['number']);?>"  title="<?php echo esc_attr($cardValue['number']);?>"/></span>
+                        <span class="payment-method-label"><?php echo esc_html($cardValue['number']);?></span>
+                        <span class="payment-method-price"><?php echo $total;?> <?php echo $currency;?></span>
+                        <span class="payment-method-icon2"><i class="fa fa-chevron-right"></i></span>
+                        </button>
                     <?php
                     }
                     ?>
@@ -155,6 +200,7 @@ defined( 'ABSPATH' ) || exit;
                             type="checkbox"
                             id="chkSaveCard"
                             onclick="toggleSaveCard(<?php echo $checked ? 'true' : 'false'; ?>);"
+                            onkeydown="if(event.key === 'Enter' || event.keyCode === 13) { this.click(); }"
                             <?php echo $checked ? 'checked' : ''; ?>
                         >
                         <span class="slider round"></span>

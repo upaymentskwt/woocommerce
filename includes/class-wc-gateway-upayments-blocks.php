@@ -1,11 +1,12 @@
 <?php
 // Use the necessary Blocks Interfaces
 use Automattic\WooCommerce\Blocks\Payments\Integrations\AbstractPaymentMethodType;
+use UPayments\Subscription\Helpers\Utils;
 
 /**
  * UPayments Blocks Integration Class
  *
- * This class handles the integration of the UPayments gateway with the 
+ * This class handles the integration of the UPayments gateway with the
  * WooCommerce Block Checkout (including data and assets registration).
  */
 class WCGatewayUPaymentsBlocks extends AbstractPaymentMethodType {
@@ -68,88 +69,174 @@ class WCGatewayUPaymentsBlocks extends AbstractPaymentMethodType {
      * @return array
      */
     public function get_payment_method_data() {
-        // Basic settings and flags
-        $whitelabled = false;
-        $icons = [];
+        $save_card_enabled       = $this->isGatewayOptionEnabled( 'enable_save_card' );
+        $is_subscription_enabled = $this->isGatewayOptionEnabled( 'enable_subscriptions' );
+        
+        $icons_data     = $this->getPaymentIconsData();
+        $user_card_data = $this->getUserCardData();
+        
+        $total = WC()->cart ? WC()->cart->get_total( '' ) : '0.00';
+
+        return [
+            'is_whitelabled'            => $icons_data['whitelabled'],
+            'payment_icons'             => $icons_data['icons'],
+            'saved_cards'               => $user_card_data['saved_cards'],
+            'is_logged_in'              => $user_card_data['is_logged_in'],
+            'save_card_enabled'         => $save_card_enabled,
+            'save_card_toggle_on'       => $user_card_data['save_card_on'],
+            'token'                     => $user_card_data['token'],
+            'cart_total'                => $total,
+            'currency_display'          => $this->getCurrencyDisplay(),
+            'is_subscription_enabled'   => $is_subscription_enabled,
+            'product_type'              => $this->getCartProductDetails(),
+            'upay_subscription_plan'     => 'one_time',
+            'upay_subscription_interval' => '0',
+            'plugin_url'                => plugin_dir_url( dirname( __FILE__ ) ),
+            'translation'               => [
+                'save_card_label'       => __( 'For faster and more secure checkout. Save your card details.', 'upayments' ),
+                'saved_cards_label'     => __( 'Saved Cards', 'upayments' ),
+                'other_options_label'   => __( 'Other Options', 'upayments' ),
+            ],
+            'supports'                  => [ 'products' ],
+        ];
+    }
+
+    /**
+     * Check if a specific gateway option is enabled.
+     *
+     * @param string $option_key
+     * @return bool
+     */
+    private function isGatewayOptionEnabled( $option_key ) {
+        if ( ! $this->gateway ) {
+            return false;
+        }
+        return $this->gateway->get_option( $option_key ) === 'yes';
+    }
+
+    /**
+     * Get payment icons and whitelabel status.
+     *
+     * @return array
+     */
+    private function getPaymentIconsData() {
+        if ( ! $this->gateway ) {
+            return [
+                'icons'       => [],
+                'whitelabled' => false,
+            ];
+        }
+
+        $payment_data = $this->gateway->getPaymentIcons();
+        return [
+            'icons'       => $payment_data['payment'] ?? [],
+            'whitelabled' => $payment_data['whitelabled'] ?? false,
+        ];
+    }
+
+    /**
+     * Fetch user login state, saved cards, and toggle preferences.
+     *
+     * @return array
+     */
+    private function getUserCardData() {
+        $user_id = get_current_user_id();
+        $logged_in_user = $this->gateway ? $this->gateway->getLoggedinUserPhoneNumber() : [];
+        $is_logged_in = !empty($logged_in_user['success']);
+        $phone = $logged_in_user['phone'] ?? '';
+
         $saved_cards = [];
-        $is_logged_in = false;
-        $user_id = null;
-        $product_details = null;
-        $save_card_on = false;
-        
-        // Safety check: ensure the gateway instance exists before calling methods
-        $save_card_enabled = $this->gateway ? ($this->gateway->get_option('enable_save_card') === 'yes') : false;
+        $save_card_enabled = $this->isGatewayOptionEnabled( 'enable_save_card' );
+        if ($save_card_enabled && $is_logged_in && !empty($phone) && $this->gateway) {
+            $icons_data = $this->getPaymentIconsData();
+            $icons = $icons_data['icons'] ?? [];
+            $token = '';
+            // 1. Fetch KNET saved cards using dynamic token
+            $knetCardList = [];
+            if (empty($icons) || isset($icons['knet'])) {
+                if ($user_id > 0 && !empty($phone)) {
+                    $token_info = Utils::generateDynamicToken($user_id, $phone);
+                    $token = $token_info['token'] ?? '';
+                }
 
-        // Check if Subscription is Enabled or not
-        $is_subscription_enabled = $this->gateway ? ($this->gateway->get_option('enable_subscriptions') === 'yes') : false;
-        
-        // 1. Get payment icons and whitelabeled status
-        if ( $this->gateway ) {
-            $payment_data = $this->gateway->getPaymentIcons(); 
-            if ( $payment_data ) {
-                $icons = $payment_data['payment'] ?? [];
-                $whitelabled = $payment_data['whitelabled'] ?? false;
-            }
-
-            // 2. Get saved cards and login status
-            $loggedInUser = $this->gateway->get_logged_in_user_phone_number();
-            if ( isset($loggedInUser['success']) && $loggedInUser['success'] ) {
-                $is_logged_in = true;
-                $user_id = get_current_user_id();
-                $savedCards = $this->gateway->getSavedCards($loggedInUser['phone'].$user_id);
-
-                $hasPhone = $loggedInUser['success'] && !empty($loggedInUser['phone']);
-                $save_card_on  = ($hasPhone || ($is_subscription_enabled && $hasPhone)) ? true : false;
-                
-                if ( $savedCards && isset($savedCards['result']) && $savedCards['result'] == 'success' ) {
-                    $saved_cards = $savedCards['data'];
+                if (!empty($token) && $token !== '0') {
+                    $savedKnetCards = $this->gateway->getSavedCards($token);
+                    if ($savedKnetCards && isset($savedKnetCards['result']) && $savedKnetCards['result'] === 'success' && !empty($savedKnetCards['data'])) {
+                        foreach ($savedKnetCards['data'] as $card) {
+                            $brand  = strtoupper(trim($card['brand'] ?? ''));
+                            $scheme = strtoupper(trim($card['scheme'] ?? ''));
+                            $token_val = trim((string)($card['token'] ?? ''));
+                            // Only accept genuine KNET cards (brand/scheme KNET or 8-digit KFast token)
+                            if ($brand === 'KNET' || $scheme === 'KNET' || (strlen($token_val) === 8 && ctype_digit($token_val))) {
+                                $card['payment_type'] = 'knet';
+                                $knetCardList[] = $card;
+                            }
+                        }
+                    }
                 }
             }
 
-        }
-        if ( WC()->cart ) {
-            foreach ( WC()->cart->get_cart() as $cart_item_key => $cart_item ) {
-                $product = $cart_item['data'];
-                $product_details[] = [
-                    'type' => $product->get_type(), 
-                ];
+            // 2. Fetch CC saved cards
+            $ccCardList = [];
+            if (empty($icons) || isset($icons['cc'])) {
+                $savedCCards = $this->gateway->getSavedCards($phone . $user_id);
+                if ($savedCCards && isset($savedCCards['result']) && $savedCCards['result'] === 'success' && !empty($savedCCards['data'])) {
+                    foreach ($savedCCards['data'] as $card) {
+                        $brand  = strtoupper(trim($card['brand'] ?? ''));
+                        $scheme = strtoupper(trim($card['scheme'] ?? ''));
+                        $token_val = trim((string)($card['token'] ?? ''));
+                        // Ensure only credit cards are included in CC list
+                        if ($brand !== 'KNET' && $scheme !== 'KNET' && strlen($token_val) !== 8) {
+                            $card['payment_type'] = 'cc';
+                            $ccCardList[] = $card;
+                        }
+                    }
+                }
             }
-        }
-        
-        // 3. Get total and currency display logic
-        // We use standard WC() calls which are available during checkout block rendering
-        $total = WC()->cart ? WC()->cart->get_total('') : '0.00';
-        $language = get_locale();
-        $currency_code = get_woocommerce_currency();
-        
-        // Logic for currency display preference
-        if ( strpos($language, 'en') === 0 ) {
-            $currency_display = $currency_code;
-        } else {
-            $currency_display = get_woocommerce_currency_symbol();
+
+            $saved_cards = array_merge($knetCardList, $ccCardList);
         }
 
-        // 4. Return all data to the block
         return [
-            'is_whitelabled'            => $whitelabled,
-            'payment_icons'             => $icons,
-            'saved_cards'               => $saved_cards,
-            'is_logged_in'              => $is_logged_in,
-            'save_card_enabled'         => $save_card_enabled,
-            'save_card_toggle_on'       => $save_card_on,
-            'cart_total'                => $total,
-            'currency_display'          => $currency_display,
-            'is_subscription_enabled'   => $is_subscription_enabled,
-            'product_type'              => $product_details,
-            'upay_subscription_plan'     => 'one_time', // Default value
-            'upay_subscription_interval' => '0',        // Default value
-            'plugin_url'                => plugin_dir_url( dirname( __FILE__ ) ),
-            'translation'               => [
-                'save_card_label'       => __('For faster and more secure checkout. Save your card details.', 'upayments'),
-                'saved_cards_label'     => __('Saved Cards', 'upayments'),
-                'other_options_label'   => __('Other Options', 'upayments'),
-            ],
-            'supports'    => [ 'products' ],
+            'is_logged_in' => $is_logged_in,
+            'save_card_on' => $is_logged_in && !empty($phone),
+            'saved_cards'  => $saved_cards,
+            'token'        => $token,
         ];
+    }
+
+    /**
+     * Extract product details from current cart.
+     *
+     * @return array|null
+     */
+    private function getCartProductDetails() {
+        if ( ! WC()->cart ) {
+            return null;
+        }
+
+        $product_details = [];
+        foreach ( WC()->cart->get_cart() as $cart_item ) {
+            $product           = $cart_item['data'];
+            $product_details[] = [
+                'type' => $product->get_type(),
+            ];
+        }
+
+        return $product_details;
+    }
+
+    /**
+     * Determine currency display string based on locale.
+     *
+     * @return string
+     */
+    private function getCurrencyDisplay() {
+        $language = get_locale();
+        if ( strpos( $language, 'en' ) === 0 ) {
+            return get_woocommerce_currency();
+        }
+
+        return get_woocommerce_currency_symbol();
     }
 }
