@@ -23,7 +23,7 @@ define("UP_PLUGIN_PATH", plugin_dir_path(__FILE__));
 define('UPAYMENTS_PLUGIN_FILE', __FILE__ );
 define('DATE_TIME_FORMAT', 'Y-m-d H:i:s');
 define('PROD_UPAYMENTS', 'https://apiv2api.upayments.com/api/v1/');
-define('STAG_UPAYMENTS', 'https://dev-apiv2api.upayments.com/api/v1/');
+define('STAG_UPAYMENTS', 'https://beta-apiv2api.upayments.com/api/v1/');
 define('SANDBOX_UPAYMENTS', 'https://sandboxapi.upayments.com/api/v1/');
 
 require_once __DIR__ . '/vendor/plugin-update-checker/plugin-update-checker.php';
@@ -980,6 +980,7 @@ function woocommerceUpaymentsInit() {
             $product_qty     = [];
             $product_type    = [];
             $cart_has_custom_product = false;
+            $isSaveCardRequested = false;
             $upayment_payment_type = '';
             $credit_card_token = '';
             $customerUnqToken = '';
@@ -1051,11 +1052,7 @@ function woocommerceUpaymentsInit() {
                 }
                 $upayment_payment_type = $src;
 
-                $cardToken = '';
-                if(isset($extension_data['card_token'])){
-                    $cardToken = sanitize_text_field($extension_data['card_token']);
-                }
-
+                $cardToken = null;
                 $isSaveCard = false;
                 if(isset($extension_data['save_card'])){
                     $isSaveCardRequested = $extension_data['save_card'] == 1 ? true : false;
@@ -1108,6 +1105,9 @@ function woocommerceUpaymentsInit() {
                 }
 
                 $src = "knet";
+                if (!empty($extension_data['upayment_payment_type'])) {
+                    $src = sanitize_text_field($extension_data['upayment_payment_type']);
+                }
                 $cardToken = null;
                 $isSaveCard = false;
                 $isSaveCardRequested = isset($_POST["save_card"]) && sanitize_text_field(wp_unslash($_POST["save_card"])) === '1';
@@ -1120,7 +1120,7 @@ function woocommerceUpaymentsInit() {
                             $order->add_meta_data("UPayments_Checkout_Selected", $upayment_payment_type);
                         }
                     $cardToken = isset($_POST["card_token"]) ? sanitize_text_field(wp_unslash($_POST["card_token"])) : '';
-                    $isSaveCard = $src == 'cc' && $isSaveCardRequested;
+                    $isSaveCard = ($src == 'cc' && $isSaveCardRequested);
                 }
 
                 $subscription_plan = 'one_time';
@@ -1168,16 +1168,18 @@ function woocommerceUpaymentsInit() {
 
             // Kfast token must be 8 digits when the payment_type is knet
             $kFastToken = null;
+            $newToken = null;
             if ($src === 'knet' || $upayment_payment_type === 'knet') {
                 if (!empty($cardToken) && strlen(trim($cardToken)) === 8 && ctype_digit(trim($cardToken))) {
                     $kFastToken = trim($cardToken);
                 } elseif (!empty($customer_unq_token) && strlen(trim($customer_unq_token)) === 8 && ctype_digit(trim($customer_unq_token))) {
-                    $customer_unq_token = Utils::generateDynamicToken($user_id, $customer_unq_token)['token'];
+                    $newToken = Utils::generateDynamicToken($user_id, $customer_unq_token)['token'];
                     update_user_meta($user_id, 'customer_unique_token', $customer_unq_token);
-
-                    $kFastToken = trim($this->getCustomerUniqueToken($customer_unq_token));
                 } else {
-                    $kFastToken = (string) (10000000 + (crc32($order_id . '|' . ($phone ?: time())) % 89999999));
+                    $newToken = (string) (10000000 + (crc32($order_id . '|' . ($phone ?: time())) % 89999999));
+                }
+                if(!empty($newToken) && strlen($newToken) === 8 && ctype_digit($newToken)){
+                    $kFastToken = trim($this->getCustomerUniqueToken($newToken));
                 }
             }
 
@@ -1982,6 +1984,14 @@ function woocommerceUpaymentsInit() {
                 $safe_data = $this->redactSensitiveData($data);
                 $message  .= ' | Payload: ' . print_r($safe_data, true);
             }
+
+            // not required as of now
+            // $file = UP_PLUGIN_PATH . "debug.log";
+            // $fp = fopen($file, "a+");
+            // fwrite($fp, "\n");
+            // fwrite($fp, date(DATE_TIME_FORMAT) . ": ");
+            // fwrite($fp, print_r($message, true));
+            // fclose($fp);
 
             if (function_exists('wc_get_logger')) {
                 wc_get_logger()->debug($message, ['source' => 'woocommerce-upayments']);
