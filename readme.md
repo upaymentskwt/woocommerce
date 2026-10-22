@@ -156,3 +156,12 @@ Supported currency codes are: KWD, SAR, USD, BHD, EUR, OMR, QAR, AED
  -HMAC signature Added
  -KFAST Support
  -Security Enhancements Updated
+
+= 3.2.1 = 
+ -Block Checkout Updated 
+
+= 3.2.2 = 
+ -Block Checkout Updated 
+
+= 3.2.3 = 
+ -Readme Updated + Block Checkout Updated

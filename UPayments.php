@@ -3,7 +3,7 @@
  * Plugin Name: UPayments
  * Plugin URI: https://developers.upayments.com/reference/woocommerce
  * Description: UPayments Plugin with Unified payment gateway supporting Old/New design, Save Card, and Multimerchant. Supports Block Checkout, Auto Deduction for Subscriptions, Bookable Products, KFAST.
- * Version: 3.2.1
+ * Version: 3.2.3
  * Author: <a href="https://developers.upayments.com/reference/woocommerce" target="_blank">UPayments Company</a>
  * Author URI: https://developers.upayments.com/reference/woocommerce
  * Requires at least: 5.6
