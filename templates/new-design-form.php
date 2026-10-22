@@ -78,6 +78,7 @@ use UPayments\Subscription\Helpers\Utils;
             $whitelabled = $payment_data['whitelabled'];
         }
         $isSubscriptionEnabled = $gateway->get_option('enable_subscriptions') === 'yes' ? true : false;
+        if(!empty($icons)){
         if($whitelabled){
     ?>
         <div class="payment-buttons">
@@ -231,6 +232,7 @@ use UPayments\Subscription\Helpers\Utils;
         </div>
     <?php
         }
+    }
     ?>
         <input id="upayment_payment_type" type="hidden" name="upayment_payment_type" value="upayments"/>
         <input id="card_token" type="hidden" name="card_token" value=""/>

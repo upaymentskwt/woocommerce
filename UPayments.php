@@ -3,7 +3,7 @@
  * Plugin Name: UPayments
  * Plugin URI: https://developers.upayments.com/reference/woocommerce
  * Description: UPayments Plugin with Unified payment gateway supporting Old/New design, Save Card, and Multimerchant. Supports Block Checkout, Auto Deduction for Subscriptions, Bookable Products, KFAST.
- * Version: 3.2.0
+ * Version: 3.2.1
  * Author: <a href="https://developers.upayments.com/reference/woocommerce" target="_blank">UPayments Company</a>
  * Author URI: https://developers.upayments.com/reference/woocommerce
  * Requires at least: 5.6
@@ -562,165 +562,118 @@ function woocommerceUpaymentsInit() {
         public function return_from_upayments()
         {
             try {
-                // 1. Validate order ID from GET parameter
-                $raw_order_id = isset($_GET['wc_order_id']) ? sanitize_text_field(wp_unslash($_GET['wc_order_id'])) : '';
-                if (empty($raw_order_id)) {
-                    $this->log('Return URL Error: No shop reference received.');
-                    wp_safe_redirect(add_query_arg('suspected', 'true', wc_get_checkout_url()));
+                if (!isset($_GET["wc_order_id"])){
+                    $status_message = __("No shop reference received from UPayments.", $this->domain);
+                    $this->log($status_message);
+                    wp_redirect(add_query_arg("suspected", "true", wc_get_checkout_url()));
                     exit();
+                }else{
+                    $this->log("Ret Order Id Received: " . $_GET["wc_order_id"]);
                 }
 
-                // Clean up possible appended payment_id query strings
-                $pos = strpos($raw_order_id, '?payment_id');
-                $order_id = ($pos !== false) ? absint(substr($raw_order_id, 0, $pos)) : absint($raw_order_id);
-
-                if (!$order_id) {
-                    $this->log('Return URL Error: Invalid order ID.');
-                    wp_safe_redirect(add_query_arg('suspected', 'true', wc_get_checkout_url()));
-                    exit();
+                $order_id = sanitize_text_field($_GET["wc_order_id"]);
+                $paymentID = "";
+                $pos = strpos($order_id, "?payment_id");
+                if ($pos !== false){
+                    $paymentID = substr($order_id, $pos + strlen("?payment_id") + 1);
+                    $order_id = (int)substr($order_id, 0, $pos);
                 }
 
-                // 2. Safely retrieve the WC_Order instance
-                $order = wc_get_order($order_id);
-                if (!$order) {
-                    $this->log("Return URL Error: Order #{$order_id} not found.");
-                    wp_safe_redirect(add_query_arg('suspected', 'true', wc_get_checkout_url()));
-                    exit();
-                }
+                $order = new WC_Order($order_id);
 
-                // Verify order key if provided
-                $order_key = isset($_GET['order_key']) ? sanitize_text_field(wp_unslash($_GET['order_key'])) : '';
-                if (!empty($order_key) && !hash_equals($order->get_order_key(), $order_key)) {
-                    $this->log("Return URL Error: Order key mismatch for Order #{$order_id}.");
-                    wp_safe_redirect(add_query_arg('suspected', 'true', wc_get_checkout_url()));
-                    exit();
-                }
-
-                // 3. Extract transaction info safely
-                $payment_id = isset($_GET['payment_id']) ? sanitize_text_field(wp_unslash($_GET['payment_id'])) : '';
-                $track_id   = isset($_GET['track_id'])   ? sanitize_text_field(wp_unslash($_GET['track_id']))   : '';
-                $raw_status = isset($_GET['result'])     ? strtoupper(sanitize_text_field(wp_unslash($_GET['result']))) : '';
-
-                // 4. If order is already processed/paid (e.g. by Webhook), redirect straight to Thank You page
-                if ($order->is_paid()) {
-                    if (function_exists('WC') && WC()->cart) {
-                        WC()->cart->empty_cart();
-                    }
-                    wp_safe_redirect($this->get_return_url($order));
-                    exit();
-                }
-
-                // 5. If Webhook hasn't completed it yet, verify via API if possible
-                $verified_data = false;
-                $ref_id = !empty($track_id) ? $track_id : $payment_id;
-                if (!empty($ref_id) && method_exists($this, 'verifyTransactionWithApi')) {
-                    $verified_data = $this->verifyTransactionWithApi($ref_id);
-                    if ($verified_data && !empty($verified_data['status'])) {
-                        $raw_status = strtoupper($verified_data['status']);
-                    }
-                }
-
-                // 6. Handle redirect flow based on verified status
-                if ($raw_status === 'CAPTURED' || $raw_status === 'SUCCESS') {
-                    // Security check: Must have verified data from server-to-server API
-                    if (!$verified_data || empty($verified_data['status'])) {
-                        $this->log("Return URL Error: Unverified payment attempt for Order #{$order_id}. Missing API verification data.");
-                        wp_safe_redirect(add_query_arg('failed', 'true', wc_get_checkout_url()));
+                if (isset($_GET["result"])){
+                    $this->log("Ret Order Result set.");
+                    $orderId = sanitize_text_field($_GET["requested_order_id"]);
+                    $uPaymentsOrderId = get_post_meta($order_id, "UPayments_order_id", true)  ? get_post_meta($order_id, "UPayments_order_id", true) : $order->get_meta('UPayments_order_id');
+                    $this->log("Ret Upayments Order Id Received: " . $uPaymentsOrderId);
+                    if ($orderId != $uPaymentsOrderId){
+                        $status_message = __("Ret Order references does not match.", $this->domain);
+                        $this->log($status_message);
+                        $order->update_status("failed", $status_message, $this->domain);
+                        wp_redirect(add_query_arg("suspected", "true", wc_get_checkout_url()));
                         exit();
+                    }else{
+                        $this->log("Ret Order references matched.");
+                        $status = sanitize_text_field($_GET["result"]);
+                        
+                        if (isset($_GET["payment_id"])){
+                            $paymentId = sanitize_text_field($_GET["payment_id"]);
+                        }
+
+                        $trackId = sanitize_text_field($_GET["track_id"]);
+
+                        $paymentType = "";
+
+                        if (isset($_GET["payment_type"])){
+                            $paymentType = sanitize_text_field($_GET["payment_type"]);
+                        }
+
+                        $postDate = sanitize_text_field($_GET["post_date"]);
+                        $tranId = sanitize_text_field($_GET["tran_id"]);
+                        $ref = sanitize_text_field($_GET["ref"]);
+                        $auth = sanitize_text_field($_GET["auth"]);
+
+                        $order->delete_meta_data("UPayments_Result");
+
+                        if (!empty($paymentId)){
+                            $order->delete_meta_data("UPayments_PaymentID");
+                        }
+
+                        $order->delete_meta_data("UPayments_TrackID");
+                        $order->delete_meta_data("UPayments_payment_type");
+                        $order->delete_meta_data("UPayments_PostDate");
+                        $order->delete_meta_data("UPayments_TranID");
+                        $order->delete_meta_data("UPayments_Ref");
+                        $order->delete_meta_data("UPayments_Auth");
+                        $order->delete_meta_data("_payment_method_title");
+
+                        $order->add_meta_data("UPayments_Result", $status);
+
+                        if (!empty($paymentId)){
+                            $order->add_meta_data("UPayments_PaymentID", $paymentId);
+                        }
+
+                        $order->add_meta_data("UPayments_TrackID", $trackId);
+                        $order->add_meta_data("UPayments_payment_type", $paymentType);
+                        $order->add_meta_data("UPayments_PostDate", $postDate);
+                        $order->add_meta_data("UPayments_TranID", $tranId);
+                        $order->add_meta_data("UPayments_Ref", $ref);
+                        $order->add_meta_data("UPayments_Auth", $auth);
+                        $order->add_meta_data("_payment_method_title", 'UPayments');
+
+                        $order->save_meta_data();
+
+                        if ($status == "CANCELED" || $status == "CANCELLED"){
+                            $status_message = __("Received canceled response from UPayments.", $this->domain) . ($paymentID ? " PaymentID: " . $paymentID : "");
+                            $this->log("Ret Order Cancel Status: " . $status_message);
+                            $order->update_status("cancelled", $status_message);
+                            wp_redirect(add_query_arg("cancelled", "true", wc_get_checkout_url()));
+                            exit();
+                        }elseif ($status == "ERROR" || $status == "NOT CAPTURED" || $status == null || $status == "FAILURE"){
+                            $status_message = __("Received error response from UPayments.", $this->domain) . ($paymentID ? " PaymentID: " . $paymentID : "");
+                            $this->log("Ret Order Error Status: " . $status_message);
+                            $order->update_status("failed", $status_message, $this->domain);
+                            wp_redirect(add_query_arg("failed", "true", wc_get_checkout_url()));
+                            exit();
+                        }elseif ($status == "CAPTURED" || $status == "SUCCESS"){
+                            $this->log("Ret Order CAPTURED Status");
+
+                            $paid_order_status = 'processing';
+                            if ($order->get_status() == 'completed' || $this->getIsOrderComplete()) {
+                                $paid_order_status = 'completed';
+                            }
+
+                            global $woocommerce;
+
+                            $order->update_status($paid_order_status, __('Payment successful with UPayments. PaymentID: '.$paymentID, $this->domain));
+                            $woocommerce->cart->empty_cart();
+                            wp_redirect(add_query_arg("status", $status, $this->get_return_url($order)));
+                            exit();
+                        }
                     }
-
-                    $remote_amount   = (float) ($verified_data['amount'] ?? 0);
-                    $remote_currency = strtoupper($verified_data['currency'] ?? '');
-                    $order_total     = (float) $order->get_total();
-                    $order_currency  = strtoupper($order->get_currency());
-
-                    // Verify Amount
-                    if (abs($remote_amount - $order_total) > 0.01) {
-                        $this->log("Return URL: Amount mismatch for Order #{$order_id}. Expected: {$order_total}, API: {$remote_amount}");
-                        $order->update_status('on-hold', sprintf(
-                            __('Payment verification failed: Amount mismatch (Expected: %s %s, Received: %s %s).', $this->id),
-                            $order_total,
-                            $order_currency,
-                            $remote_amount,
-                            $remote_currency
-                        ));
-                        wp_safe_redirect(add_query_arg('failed', 'true', wc_get_checkout_url()));
-                        exit();
-                    }
-
-                    // Verify Currency
-                    if ($remote_currency !== $order_currency) {
-                        $this->log("Return URL: Currency mismatch for Order #{$order_id}. Expected: {$order_currency}, API: {$remote_currency}");
-                        $order->update_status('on-hold', sprintf(
-                            __('Payment verification failed: Currency mismatch (Expected: %s, Received: %s).', $this->id),
-                            $order_currency,
-                            $remote_currency
-                        ));
-                        wp_safe_redirect(add_query_arg('failed', 'true', wc_get_checkout_url()));
-                        exit();
-                    }
-
-                    // Verify reference matches order ID or stored UPayments order ID if provided
-                    $remote_ref = $verified_data['ref'] ?? '';
-                    $stored_uid = (string) $order->get_meta('UPayments_order_id');
-                    if (!empty($remote_ref) && $remote_ref !== (string) $order_id && $remote_ref !== $stored_uid) {
-                        $this->log("Return URL: Reference mismatch for Order #{$order_id}. Expected: {$order_id} or {$stored_uid}, API: {$remote_ref}");
-                        $order->update_status('on-hold', __('Payment verification failed: Transaction reference mismatch.', $this->id));
-                        wp_safe_redirect(add_query_arg('failed', 'true', wc_get_checkout_url()));
-                        exit();
-                    }
-
-                    $p_id = (is_array($verified_data) && !empty($verified_data['payment_id'])) ? $verified_data['payment_id'] : $payment_id;
-                    $t_id = (is_array($verified_data) && !empty($verified_data['track_id']))   ? $verified_data['track_id']   : $track_id;
-                    $tr_id = (is_array($verified_data) && !empty($verified_data['tran_id']))  ? $verified_data['tran_id']    : '';
-                    $ref = (is_array($verified_data) && !empty($verified_data['ref']))        ? $verified_data['ref']        : '';
-                    $auth = (is_array($verified_data) && !empty($verified_data['auth']))      ? $verified_data['auth']       : '';
-
-                    $order->update_meta_data('UPayments_Result', $raw_status);
-                    $order->update_meta_data('UPayments_PaymentID', $p_id);
-                    $order->update_meta_data('UPayments_TrackID', $t_id);
-                    $order->update_meta_data('UPayments_TranID', $tr_id);
-                    $order->update_meta_data('UPayments_Ref', $ref);
-                    $order->update_meta_data('UPayments_Auth', $auth);
-                    $order->update_meta_data('UPayments_PostDate', current_time('mysql'));
-                    $order->update_meta_data('_payment_method_title', 'UPayments');
-
-                    // Set transaction ID, decrement stock, and trigger completion logic
-                    $order->payment_complete($p_id);
-
-                    // Add verified note to order history
-                    $order->add_order_note(
-                        sprintf(__('Payment verified successfully via UPayments return URL. PaymentID: %s, TranID: %s', $this->id),
-                        $p_id,
-                        !empty($tr_id) ? $tr_id : 'N/A')
-                    );
-
-                    // If merchant explicitly requested auto-completion
-                    if ($this->getIsOrderComplete() && $order->get_status() !== 'completed') {
-                        $order->update_status('completed', __('Order auto-completed as configured in gateway settings.', $this->id));
-                    }
-
-                    $order->save();
-
-                    if (function_exists('WC') && WC()->cart) {
-                        WC()->cart->empty_cart();
-                    }
-                    wp_safe_redirect($this->get_return_url($order));
-                    exit();
+                }else{
+                    $this->log("Ret Order Result not set.");
                 }
-
-                if (in_array($raw_status, ['CANCELED', 'CANCELLED'], true)) {
-                    $order->update_status('cancelled', sprintf(__('Customer cancelled payment at gateway. PaymentID: %s', $this->id), $payment_id));
-                    wp_safe_redirect(add_query_arg('cancelled', 'true', wc_get_checkout_url()));
-                    exit();
-                }
-
-                // Default failure redirect for any other outcome
-                $this->log("Return URL payment failed or pending. Status: {$raw_status}");
-                $order->update_status('failed', sprintf(__('Payment failed or incomplete. Status: %s', $this->id), $raw_status));
-                wp_safe_redirect(add_query_arg('failed', 'true', wc_get_checkout_url()));
-                exit();
-
             } catch (\Throwable $e) {
                 $this->log('Fatal error caught in return_from_upayments: ' . $e->getMessage());
                 wp_safe_redirect(add_query_arg('failed', 'true', wc_get_checkout_url()));
@@ -736,6 +689,7 @@ function woocommerceUpaymentsInit() {
          */
         public function web_hook_handler()
         {
+            global $woocommerce;
             // 1. Enforce POST requests to block URL/browser bar manipulation
             if (isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] !== 'POST') {
                 $this->log("Webhook rejected: Invalid request method " . $_SERVER['REQUEST_METHOD']);
@@ -764,120 +718,90 @@ function woocommerceUpaymentsInit() {
                 exit('Order Not Found');
             }
 
-            // Prevent race conditions and duplicate processing
-            if ($order->is_paid() || (int) $order->get_meta('UPayments_webhook_triggered') === 1) {
-                $this->log("Webhook skipped: Order #{$order_id} has already been processed.");
-                status_header(200);
-                exit('Already Processed');
+            $pos = strpos($order_id, "?PaymentID");
+            if ($pos !== false){
+                $order_id = (int)substr($order_id, 0, $pos);
             }
 
-            // 3. Extract transaction identifier only from POST payload
-            $payment_id = isset($_POST['payment_id']) ? sanitize_text_field(wp_unslash($_POST['payment_id'])) : '';
-            $track_id   = isset($_POST['track_id'])   ? sanitize_text_field(wp_unslash($_POST['track_id']))   : '';
-
-            if (empty($payment_id) && empty($track_id)) {
-                $this->log("Webhook rejected: Missing payment_id and track_id for Order #{$order_id}");
-                status_header(400);
-                exit('Missing Transaction Reference');
+            if ($order_id > 0){
+                $uPaymentsWebhookTriggered = (int)get_post_meta($order_id, "UPayments_webhook_triggered", true);
+                if ($uPaymentsWebhookTriggered == 1){
+                    $this->log($order_id . " => UPayments_webhook_triggered set");
+                    exit();
+                }else{
+                    $this->log($order_id . " => UPayments_webhook_triggered Not set");
+                }
+            }else{
+                $this->log("Order Id > 0: " . $order_id);
             }
+
+            $order = new WC_Order($order_id);
 
             try {
-                // 4. Query UPayments API directly (Server-to-Server)
-                $ref_id = !empty($track_id) ? $track_id : $payment_id;
-                $verified_data = $this->verifyTransactionWithApi($ref_id);
-
-                if (!$verified_data || empty($verified_data['status'])) {
-                    $this->log("API Verification Failed for Order #{$order_id}");
-                    status_header(400);
-                    exit('Verification Failed');
-                }
-
-                $remote_status   = strtoupper($verified_data['status']);
-                $remote_amount   = (float) ($verified_data['amount'] ?? 0);
-                $remote_currency = strtoupper($verified_data['currency'] ?? '');
-                $order_total     = (float) $order->get_total();
-                $order_currency  = strtoupper($order->get_currency());
-
-                // 5. Verify Amount (Epsilon comparison to prevent float precision rounding bugs)
-                if (abs($remote_amount - $order_total) > 0.01) {
-                    $this->log("Amount mismatch for Order #{$order_id}. Expected: {$order_total}, API: {$remote_amount}");
-                    $order->update_status('on-hold', sprintf(
-                        __('Payment verification failed: Amount mismatch (Expected: %s %s, Received: %s %s).', $this->id),
-                        $order_total,
-                        $order_currency,
-                        $remote_amount,
-                        $remote_currency
-                    ));
-                    status_header(400);
-                    exit('Amount Mismatch');
-                }
-
-                // 6. Verify Currency
-                if ($remote_currency !== $order_currency) {
-                    $this->log("Currency mismatch for Order #{$order_id}. Expected: {$order_currency}, API: {$remote_currency}");
-                    $order->update_status('on-hold', sprintf(
-                        __('Payment verification failed: Currency mismatch (Expected: %s, Received: %s).', $this->id),
-                        $order_currency,
-                        $remote_currency
-                    ));
-                    status_header(400);
-                    exit('Currency Mismatch');
-                }
-
-                // Verify reference matches order ID or stored UPayments order ID if provided
-                $remote_ref = $verified_data['ref'] ?? '';
-                $stored_uid = (string) $order->get_meta('UPayments_order_id');
-                if (!empty($remote_ref) && $remote_ref !== (string) $order_id && $remote_ref !== $stored_uid) {
-                    $this->log("Webhook rejected: Transaction reference mismatch for Order #{$order_id}. Expected: {$order_id} or {$stored_uid}, Received: {$remote_ref}");
-                    status_header(400);
-                    exit('Transaction Reference Mismatch');
-                }
-
-                // 7. Store verified transaction details in order meta
-                $order->update_meta_data('UPayments_Result', $remote_status);
-                $order->update_meta_data('UPayments_PaymentID', $verified_data['payment_id'] ?? $payment_id);
-                $order->update_meta_data('UPayments_TrackID', $verified_data['track_id'] ?? $track_id);
-                $order->update_meta_data('UPayments_TranID', $verified_data['tran_id'] ?? '');
-                $order->update_meta_data('UPayments_Ref', $verified_data['ref'] ?? '');
-                $order->update_meta_data('UPayments_Auth', $verified_data['auth'] ?? '');
-                $order->update_meta_data('UPayments_PostDate', current_time('mysql'));
-                $order->update_meta_data('_payment_method_title', 'UPayments');
-
-                // 8. Process Order Status based on verified status
-                if ($remote_status === 'CAPTURED' || $remote_status === 'SUCCESS') {
-                    $order->update_meta_data('UPayments_webhook_triggered', 1);
-                    $order->save();
-
-                    // Set transaction ID, decrement stock, and trigger completion logic
-                    $order->payment_complete($verified_data['payment_id'] ?? $payment_id);
-
-                    // Add verified note to order history
-                    $order->add_order_note(
-                        sprintf(__('Payment verified successfully via UPayments API. PaymentID: %s, TranID: %s', $this->id), 
-                        $verified_data['payment_id'] ?? $payment_id, 
-                        $verified_data['tran_id'] ?? 'N/A')
-                    );
-
-                    // If merchant explicitly requested auto-completion
-                    if ($this->getIsOrderComplete() && $order->get_status() !== 'completed') {
-                        $order->update_status('completed', __('Order auto-completed as configured in gateway settings.', $this->id));
+                if (isset($_REQUEST["result"])){
+                    $orderId = sanitize_text_field($_REQUEST["requested_order_id"]);
+                    $upayOrderId = get_post_meta($order_id, "UPayments_order_id", true)  ? get_post_meta($order_id, "UPayments_order_id", true) : $order->get_meta('UPayments_order_id');
+                    if ($orderId != $upayOrderId)
+                    {
+                        $status_message = __("Order references does not match.", $this->domain);
+                        $this->log($status_message);
+                        exit();
                     }
+                    else
+                    {
+                        $this->log("Order references matched.");
+                        $status = sanitize_text_field($_REQUEST["result"]);
+                        $paymentID = sanitize_text_field($_REQUEST["payment_id"]);
+                        $trackId = sanitize_text_field($_REQUEST["track_id"]);
+                        $paymentType = sanitize_text_field($_REQUEST["payment_type"]);
+                        $postDate = sanitize_text_field($_REQUEST["post_date"]);
+                        $tranId = sanitize_text_field($_REQUEST["tran_id"]);
+                        $ref = sanitize_text_field($_REQUEST["ref"]);
+                        $auth = sanitize_text_field($_REQUEST["auth"]);
 
-                    if (function_exists('WC') && WC()->cart) {
-                        WC()->cart->empty_cart();
+                        $order->delete_meta_data("UPayments_Result");
+                        $order->delete_meta_data("UPayments_PaymentID");
+                        $order->delete_meta_data("UPayments_TrackID");
+                        $order->delete_meta_data("UPayments_payment_type");
+                        $order->delete_meta_data("UPayments_PostDate");
+                        $order->delete_meta_data("UPayments_TranID");
+                        $order->delete_meta_data("UPayments_Ref");
+                        $order->delete_meta_data("UPayments_Auth");
+                        $order->delete_meta_data("_payment_method_title");
+
+                        $order->add_meta_data("UPayments_Result", $status);
+                        $order->add_meta_data("UPayments_PaymentID", $paymentID);
+                        $order->add_meta_data("UPayments_TrackID", $trackId);
+                        $order->add_meta_data("UPayments_payment_type", $paymentType);
+                        $order->add_meta_data("UPayments_PostDate", $postDate);
+                        $order->add_meta_data("UPayments_TranID", $tranId);
+                        $order->add_meta_data("UPayments_Ref", $ref);
+                        $order->add_meta_data("UPayments_Auth", $auth);
+                        $order->add_meta_data("_payment_method_title", 'UPayments');
+
+                        $order->save_meta_data();
+
+                        if ($status == "CAPTURED" || $status == "SUCCESS"){
+                            $order->add_meta_data("UPayments_webhook_triggered", 1);
+                            $order->save_meta_data();
+
+                            $paid_order_status = 'processing';
+                            if ($order->get_status() == 'completed' || $this->getIsOrderComplete()) {
+                                $paid_order_status = 'completed';
+                            }
+                            
+                            $order->update_status($paid_order_status, __('Payment successful with UPayments. PaymentID: '.$paymentID, $this->domain));
+                            $woocommerce->cart->empty_cart();
+                            exit();
+                        }else{
+                            $this->log("Order status not CAPTURED. " . $status);
+                        }
                     }
-
-                    status_header(200);
-                    exit('OK');
-                } else {
-                    $this->log("Payment not successful. Verified Status: {$remote_status}");
-                    $order->update_status('failed', sprintf(__('UPayments payment unsuccessful. Status: %s', $this->id), $remote_status));
-                    $order->save();
-
-                    status_header(200);
-                    exit('Payment Failed');
                 }
-
+                else
+                {
+                    $this->log("Order Result not set.");
+                }
             } catch (\Throwable $e) {
                 $this->log("Webhook Error: " . $e->getMessage());
 
@@ -929,21 +853,29 @@ function woocommerceUpaymentsInit() {
 
             $data = json_decode($response, true);
 
-            if (empty($data) || !$data['status']) {
-                $this->log("API Verification Error: " . $response);
-                return false;
+            $responseData = [];
+
+            if(isset($data) && isset($data['status']) && $data['status']){
+                $transaction = $data['data']['transaction'];
+                $responseData = [
+                    'status'     => true,
+                    'result'     => $transaction['result'],
+                    'amount'     => $transaction['amount'],
+                    'currency'   => $transaction['currency'],
+                    'payment_id' => $transaction['payment_id'],
+                    'track_id'   => $transaction['track_id'],
+                    'tran_id'    => $transaction['tran_id'],
+                    'ref'        => $transaction['ref'],
+                    'auth'       => $transaction['auth'],
+                ];
+            } elseif(isset($data) && isset($data['status']) && !$data['status']){
+                $responseData = [
+                    'status'     => false,
+                    'message'    => $data['message'] ? $data['message'] : ""
+                ];
             }
 
-            return [
-                'status'     => $data['data']['payment_status'] ?? $data['result'] ?? '',
-                'amount'     => $data['data']['amount'] ?? $data['order']['amount'] ?? 0,
-                'currency'   => $data['data']['currency'] ?? $data['order']['currency'] ?? '',
-                'payment_id' => $data['data']['payment_id'] ?? '',
-                'track_id'   => $data['data']['track_id'] ?? '',
-                'tran_id'    => $data['data']['tran_id'] ?? '',
-                'ref'        => $data['data']['ref'] ?? '',
-                'auth'       => $data['data']['auth'] ?? '',
-            ];
+            return $responseData;
         }
 
         public function check_ipn_response()
@@ -1326,7 +1258,7 @@ function woocommerceUpaymentsInit() {
                             $order->add_meta_data('UPayments_AutoDeduction', 'no');
                             $order->save_meta_data();
                         }
-                        if ($result["data"]["link"]){
+                        if (isset($result["data"]["link"]) && $result["data"]["link"]){
                             $order->delete_meta_data("UPayments_order_id");
                             $order->add_meta_data("UPayments_order_id", $unique_order_id);
                             $order->save_meta_data();
@@ -1811,9 +1743,9 @@ function woocommerceUpaymentsInit() {
                 curl_close($curl);
                 if ($response){
                     $result = json_decode($response, true);
-                    if ($result["errors"]){
+                    if (isset($result["errors"]) && $result["errors"]){
                         $cards = ["error" => 1, "msg" => $result["message"]];
-                    }elseif ($result["status"]){
+                    }elseif (isset($result["status"]) && $result["status"]){
                         $token = $token;
                     }else{
                         $cards = ["error" => 1, "msg" => $result["message"]];
@@ -1851,7 +1783,7 @@ function woocommerceUpaymentsInit() {
                     $response = curl_exec($curl);
                     curl_close($curl);
                     
-                    $this->log("Response ". $response);
+                    $this->log("Response of Get payment Status :". $response);
                     if ($response){
                         $result = json_decode($response, true);
                         if($result){
@@ -1860,7 +1792,7 @@ function woocommerceUpaymentsInit() {
                                 $payment_methods["result"] = 'success';
                             }else{
                                 wc_clear_notices();
-                                wc_add_notice(__("UPayments : " . $result["message"] , $this->id) , "error");
+                                wc_add_notice(__("UPayments : " . $result["message"] ? $result["message"] : __("Payment Methods are not available. Please contact Support." , $this->id) , $this->id) , "error");
                                 return ["result" => "failure", "redirect" => wc_get_checkout_url() , ];
                             }
                         } else {
@@ -1986,16 +1918,16 @@ function woocommerceUpaymentsInit() {
             }
 
             // not required as of now
-            // $file = UP_PLUGIN_PATH . "debug.log";
-            // $fp = fopen($file, "a+");
-            // fwrite($fp, "\n");
-            // fwrite($fp, date(DATE_TIME_FORMAT) . ": ");
-            // fwrite($fp, print_r($message, true));
-            // fclose($fp);
+            $file = UP_PLUGIN_PATH . "debug.log";
+            $fp = fopen($file, "a+");
+            fwrite($fp, "\n");
+            fwrite($fp, date(DATE_TIME_FORMAT) . ": ");
+            fwrite($fp, print_r($message, true));
+            fclose($fp);
 
-            if (function_exists('wc_get_logger')) {
-                wc_get_logger()->debug($message, ['source' => 'woocommerce-upayments']);
-            }
+            // if (function_exists('wc_get_logger')) {
+            //     wc_get_logger()->debug($message, ['source' => 'woocommerce-upayments']);
+            // }
         }
 
         /**
@@ -2236,8 +2168,8 @@ function woocommerceUpaymentsInit() {
                 "Authorization: Bearer " . $this->apiKey,
                 "Accept: application/json",
                 "Content-Type: application/json",
-                'X-Signature: ' . $this->hmacSignatureKey,
-                'Uplugin-Request: ' . '1',
+                'X-Signature: ' . (!empty($this->hmacSignatureKey) ? $this->hmacSignatureKey : $this->apiKey),
+                'Uplugin-Request: 1'
             );
         }
 
