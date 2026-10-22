@@ -144,13 +144,13 @@ class WCGatewayUPaymentsBlocks extends AbstractPaymentMethodType {
         $logged_in_user = $this->gateway ? $this->gateway->getLoggedinUserPhoneNumber() : [];
         $is_logged_in = !empty($logged_in_user['success']);
         $phone = $logged_in_user['phone'] ?? '';
+        $token = '';
 
         $saved_cards = [];
         $save_card_enabled = $this->isGatewayOptionEnabled( 'enable_save_card' );
         if ($save_card_enabled && $is_logged_in && !empty($phone) && $this->gateway) {
             $icons_data = $this->getPaymentIconsData();
             $icons = $icons_data['icons'] ?? [];
-            $token = '';
             // 1. Fetch KNET saved cards using dynamic token
             $knetCardList = [];
             if (empty($icons) || isset($icons['knet'])) {
