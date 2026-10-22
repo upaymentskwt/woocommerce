@@ -121,199 +121,98 @@
                 }, toast.message),
 
                 // --- SECTION 1: SUBSCRIPTION FIELDS ---
-                payment_icons.length > 0 ? 
-                    is_subscription_enabled && hasCustomTypeProduct && createElement(
-                        'div',
-                        { className: 'upay-subscription-wrapper', style: { marginBottom: '20px', padding: '15px', background: '#f9f9f9', borderRadius: '8px', border: '1px solid #eee' } },
-                        createElement('label', { style: { display: 'block', fontWeight: 'bold', marginBottom: '5px' } }, 
-                            'Purchase Type ', createElement('span', { style: { color: 'red' } }, '*')
-                        ),
+                is_subscription_enabled && hasCustomTypeProduct && createElement(
+                    'div',
+                    { className: 'upay-subscription-wrapper', style: { marginBottom: '20px', padding: '15px', background: '#f9f9f9', borderRadius: '8px', border: '1px solid #eee' } },
+                    createElement('label', { style: { display: 'block', fontWeight: 'bold', marginBottom: '5px' } }, 
+                        'Purchase Type ', createElement('span', { style: { color: 'red' } }, '*')
+                    ),
+                    createElement('select', {
+                        value: upayData.upay_subscription_plan || 'one_time',
+                        className: 'wc-block-components-select__input',
+                        style: { width: '100%', padding: '10px', marginBottom: '15px' },
+                        onChange: (e) => handleSubscriptionChange(e.target.value, upayData.upay_subscription_interval)
+                    },
+                        createElement('option', { value: 'one_time' }, 'One-time'),
+                        createElement('option', { value: 'daily' }, 'Daily Subscription'),
+                        createElement('option', { value: 'weekly' }, 'Weekly Subscription'),
+                        createElement('option', { value: 'monthly' }, 'Monthly Subscription'),
+                        createElement('option', { value: 'quarterly' }, 'Quarterly Subscription'),
+                        createElement('option', { value: 'yearly' }, 'Yearly Subscription')
+                    ),
+                    upayData.upay_subscription_plan && upayData.upay_subscription_plan !== 'one_time' && createElement('div', {},
+                        createElement('label', { style: { display: 'block', fontWeight: 'bold', marginBottom: '5px' } }, 'Billing Interval ', createElement('span', { style: { color: 'red' } }, '*')),
                         createElement('select', {
-                            value: upayData.upay_subscription_plan || 'one_time',
+                            value: upayData.upay_subscription_interval || '',
                             className: 'wc-block-components-select__input',
-                            style: { width: '100%', padding: '10px', marginBottom: '15px' },
-                            onChange: (e) => handleSubscriptionChange(e.target.value, upayData.upay_subscription_interval)
+                            style: { width: '100%', padding: '10px' },
+                            onChange: (e) => handleSubscriptionChange(upayData.upay_subscription_plan, e.target.value)
                         },
-                            createElement('option', { value: 'one_time' }, 'One-time'),
-                            createElement('option', { value: 'daily' }, 'Daily Subscription'),
-                            createElement('option', { value: 'weekly' }, 'Weekly Subscription'),
-                            createElement('option', { value: 'monthly' }, 'Monthly Subscription'),
-                            createElement('option', { value: 'quarterly' }, 'Quarterly Subscription'),
-                            createElement('option', { value: 'yearly' }, 'Yearly Subscription')
-                        ),
-                        upayData.upay_subscription_plan && upayData.upay_subscription_plan !== 'one_time' && createElement('div', {},
-                            createElement('label', { style: { display: 'block', fontWeight: 'bold', marginBottom: '5px' } }, 'Billing Interval ', createElement('span', { style: { color: 'red' } }, '*')),
-                            createElement('select', {
-                                value: upayData.upay_subscription_interval || '',
-                                className: 'wc-block-components-select__input',
-                                style: { width: '100%', padding: '10px' },
-                                onChange: (e) => handleSubscriptionChange(upayData.upay_subscription_plan, e.target.value)
-                            },
-                                createElement('option', { value: '' }, 'Select interval'),
-                                optionsData[upayData.upay_subscription_plan] && Object.entries(optionsData[upayData.upay_subscription_plan]).map(([val, text]) => (
-                                    createElement('option', { key: val, value: val }, text)
-                                ))
-                            )
+                            createElement('option', { value: '' }, 'Select interval'),
+                            optionsData[upayData.upay_subscription_plan] && Object.entries(optionsData[upayData.upay_subscription_plan]).map(([val, text]) => (
+                                createElement('option', { key: val, value: val }, text)
+                            ))
                         )
                     )
-                : '',
+                ),
+
                 // --- SECTION 2: PAYMENT METHODS COMPARTMENTS ---
                 createElement('div', { className: 'form-row form-row-wide' },
-                    payment_icons.length > 0 ?
-                        is_whitelabled ? createElement('div', { className: 'payment-sections' },
-                            
-                            // COMPARTMENT A: Pay Using Saved Cards
-                            is_logged_in && Array.isArray(saved_cards) && saved_cards.length > 0 && [
-                                createElement('h3', { 
-                                        key: 'title-saved', 
-                                        style: { 
-                                            fontSize: '16px', 
-                                            fontWeight: 'bold', 
-                                            margin: '20px 0 10px' 
-                                        } 
-                                    }, 'Pay Using Saved Cards'
-                                ),
-                                createElement('div', { 
-                                    key: 'list-saved', 
-                                    className: 'saved-cards-group'
-                                },
-                                saved_cards.map((card, index) => 
-                                    {
-                                        const cardToken = card.token;
-                                        const cardType = card.payment_type || (card.brand && card.brand.toUpperCase() === 'KNET' ? 'knet' : 'cc');
-                                        return createElement('button', 
-                                            {
-                                                key: cardToken || index,
-                                                type: 'button',
-                                                className: `upay-payment-method ${upayData.card_token === cardToken ? 'active' : ''}`,
-                                                onClick: () => handleMethodClick(cardType, cardToken),
-                                                    style: { 
-                                                        display: 'flex', 
-                                                        width: '100%', 
-                                                        padding: '12px', 
-                                                        marginBottom: '8px', 
-                                                        alignItems: 'center', 
-                                                        borderRadius: '4px', 
-                                                        background: '#fff', 
-                                                        border: upayData.card_token === cardToken ? '2px solid #007cba' : '1px solid #ccc',
-                                                        cursor: 'pointer'
-                                                    }
-                                            },
-                                            createElement('span', { className: 'payment-method-icon' }, 
-                                                createElement('img', { 
-                                                    src: `${plugin_url}assets/images/${cardType === 'knet' ? 'knet' : 'cc'}.png`, 
-                                                    style: { 
-                                                        height: '24px' 
-                                                    } 
-                                                })
-                                            ),
-                                            createElement('span', { 
-                                                style: { 
-                                                    marginLeft: '10px', 
-                                                    flexGrow: 1, 
-                                                    textAlign: 'left', 
-                                                    fontSize: '14px' 
-                                                } 
-                                            }, card.brand ? `${card.number} (${card.brand})` : `${card.number}`),
-                                            createElement('span', { 
-                                                style: { 
-                                                    marginLeft: 'auto', 
-                                                    fontWeight: '600' 
-                                                } 
-                                            }, `${cart_total} ${currency_display}`),
-                                            createElement('i', { 
-                                                className: 'fa fa-chevron-right', 
-                                                style: { 
-                                                    marginLeft: '10px' 
-                                                } 
-                                            })
-                                        );
-                                    })
-                                )
-                            ],
-
-                            // COMPARTMENT B: Choose Payment Method
+                    is_whitelabled ? createElement('div', { className: 'payment-sections' },
+                        
+                        // COMPARTMENT A: Pay Using Saved Cards
+                        is_logged_in && Array.isArray(saved_cards) && saved_cards.length > 0 && [
                             createElement('h3', { 
-                                style: { 
-                                    fontSize: '16px', 
-                                    fontWeight: 'bold', 
-                                    margin: '25px 0 10px'
-                                } 
-                            }, 'Choose Payment Method'),
+                                    key: 'title-saved', 
+                                    style: { 
+                                        fontSize: '16px', 
+                                        fontWeight: 'bold', 
+                                        margin: '20px 0 10px' 
+                                    } 
+                                }, 'Pay Using Saved Cards'
+                            ),
                             createElement('div', { 
-                                className: 'normal-methods-group' 
+                                key: 'list-saved', 
+                                className: 'saved-cards-group'
                             },
-                            Object.entries(payment_icons).map(([key, label]) => (
-                                createElement('button', 
+                            saved_cards.map((card, index) => 
+                                {
+                                    const cardToken = card.token;
+                                    const cardType = card.payment_type || (card.brand && card.brand.toUpperCase() === 'KNET' ? 'knet' : 'cc');
+                                    return createElement('button', 
                                         {
-                                            key: key,
+                                            key: cardToken || index,
                                             type: 'button',
-                                            className: `upay-payment-method ${upayData.upayment_payment_type === key && !upayData.card_token ? 'active' : ''}`,
-                                            onClick: () => handleMethodClick(key),
-                                            style: { 
-                                                display: 'flex', 
-                                                width: '100%', 
-                                                padding: '12px', 
-                                                marginBottom: '8px', 
-                                                alignItems: 'center', 
-                                                borderRadius: '4px', 
-                                                background: '#fff', 
-                                                border: (upayData.upayment_payment_type === key && !upayData.card_token) ? '2px solid #007cba' : '1px solid #ccc' 
-                                            }
+                                            className: `upay-payment-method ${upayData.card_token === cardToken ? 'active' : ''}`,
+                                            onClick: () => handleMethodClick(cardType, cardToken),
+                                                style: { 
+                                                    display: 'flex', 
+                                                    width: '100%', 
+                                                    padding: '12px', 
+                                                    marginBottom: '8px', 
+                                                    alignItems: 'center', 
+                                                    borderRadius: '4px', 
+                                                    background: '#fff', 
+                                                    border: upayData.card_token === cardToken ? '2px solid #007cba' : '1px solid #ccc',
+                                                    cursor: 'pointer'
+                                                }
                                         },
                                         createElement('span', { className: 'payment-method-icon' }, 
-                                            (() => {
-                                                if (key === 'apple-pay-knet') {
-                                                    return [
-                                                        createElement('img', { 
-                                                            key: 'apple', 
-                                                            src: `${plugin_url}assets/images/apple-pay.png`, 
-                                                            style: { 
-                                                                height: '24px', 
-                                                                marginRight: '5px' 
-                                                            } 
-                                                        }),
-                                                        createElement('img', { 
-                                                            key: 'knet', 
-                                                            src: `${plugin_url}assets/images/knet.png`, 
-                                                            style: { 
-                                                                height: '24px' 
-                                                            } 
-                                                        })
-                                                    ];
-                                                } else if (key === 'apple-pay') {
-                                                    return [
-                                                        createElement('img', { 
-                                                            key: 'apple', 
-                                                            src: `${plugin_url}assets/images/apple-pay.png`, 
-                                                            style: { 
-                                                                height: '24px', 
-                                                                marginRight: '5px' 
-                                                            } 
-                                                        }),
-                                                        createElement('img', { 
-                                                            key: 'cc', 
-                                                            src: `${plugin_url}assets/images/cc.png`, 
-                                                            style: { 
-                                                                height: '24px' 
-                                                            } 
-                                                        })
-                                                    ];
-                                                }
-                                                return createElement('img', { 
-                                                    src: `${plugin_url}assets/images/${key}.png`, 
-                                                    style: { 
-                                                        height: '24px' 
-                                                    } 
-                                                });
-                                            })()
+                                            createElement('img', { 
+                                                src: `${plugin_url}assets/images/${cardType === 'knet' ? 'knet' : 'cc'}.png`, 
+                                                style: { 
+                                                    height: '24px' 
+                                                } 
+                                            })
                                         ),
                                         createElement('span', { 
                                             style: { 
                                                 marginLeft: '10px', 
-                                                fontWeight: '600' 
+                                                flexGrow: 1, 
+                                                textAlign: 'left', 
+                                                fontSize: '14px' 
                                             } 
-                                        }, label),
+                                        }, card.brand ? `${card.number} (${card.brand})` : `${card.number}`),
                                         createElement('span', { 
                                             style: { 
                                                 marginLeft: 'auto', 
@@ -326,59 +225,157 @@
                                                 marginLeft: '10px' 
                                             } 
                                         })
-                                    )
-                                ))
-                            ),
+                                    );
+                                })
+                            )
+                        ],
 
-                            // Save Card Toggle for New Cards
-                            save_card_enabled && upayData.upayment_payment_type === 'cc' && !upayData.card_token && (
-                                createElement('div', { 
+                        // COMPARTMENT B: Choose Payment Method
+                        createElement('h3', { 
+                            style: { 
+                                fontSize: '16px', 
+                                fontWeight: 'bold', 
+                                margin: '25px 0 10px'
+                            } 
+                        }, 'Choose Payment Method'),
+                        createElement('div', { 
+                            className: 'normal-methods-group' 
+                        },
+                        Object.entries(payment_icons).map(([key, label]) => (
+                            createElement('button', 
+                                    {
+                                        key: key,
+                                        type: 'button',
+                                        className: `upay-payment-method ${upayData.upayment_payment_type === key && !upayData.card_token ? 'active' : ''}`,
+                                        onClick: () => handleMethodClick(key),
                                         style: { 
                                             display: 'flex', 
-                                            justifyContent: 'space-between', 
+                                            width: '100%', 
+                                            padding: '12px', 
+                                            marginBottom: '8px', 
                                             alignItems: 'center', 
-                                            padding: '15px', 
-                                            borderTop: '1px solid #eee', 
-                                            marginTop: '10px' 
-                                        } 
+                                            borderRadius: '4px', 
+                                            background: '#fff', 
+                                            border: (upayData.upayment_payment_type === key && !upayData.card_token) ? '2px solid #007cba' : '1px solid #ccc' 
+                                        }
                                     },
-                                    createElement('label', { 
+                                    createElement('span', { className: 'payment-method-icon' }, 
+                                        (() => {
+                                            if (key === 'apple-pay-knet') {
+                                                return [
+                                                    createElement('img', { 
+                                                        key: 'apple', 
+                                                        src: `${plugin_url}assets/images/apple-pay.png`, 
+                                                        style: { 
+                                                            height: '24px', 
+                                                            marginRight: '5px' 
+                                                        } 
+                                                    }),
+                                                    createElement('img', { 
+                                                        key: 'knet', 
+                                                        src: `${plugin_url}assets/images/knet.png`, 
+                                                        style: { 
+                                                            height: '24px' 
+                                                        } 
+                                                    })
+                                                ];
+                                            } else if (key === 'apple-pay') {
+                                                return [
+                                                    createElement('img', { 
+                                                        key: 'apple', 
+                                                        src: `${plugin_url}assets/images/apple-pay.png`, 
+                                                        style: { 
+                                                            height: '24px', 
+                                                            marginRight: '5px' 
+                                                        } 
+                                                    }),
+                                                    createElement('img', { 
+                                                        key: 'cc', 
+                                                        src: `${plugin_url}assets/images/cc.png`, 
+                                                        style: { 
+                                                            height: '24px' 
+                                                        } 
+                                                    })
+                                                ];
+                                            }
+                                            return createElement('img', { 
+                                                src: `${plugin_url}assets/images/${key}.png`, 
+                                                style: { 
+                                                    height: '24px' 
+                                                } 
+                                            });
+                                        })()
+                                    ),
+                                    createElement('span', { 
                                         style: { 
-                                            fontSize: '0.9em' 
+                                            marginLeft: '10px', 
+                                            fontWeight: '600' 
                                         } 
-                                    }, translation.save_card_label || 'Save card for future use?'),
-                                    createElement('label', { 
-                                            className: 'switch' 
-                                        },
-                                        createElement('input', { 
-                                            type: 'checkbox', 
-                                            id: 'chkSaveCard', 
-                                            checked: (upayData.save_card !== undefined ? upayData.save_card === '1' : ((save_card_enabled && is_logged_in && save_card_toggle_on) ? true : false)), 
-                                            onChange: toggleSaveCard 
-                                        }),
-                                        createElement('span', { className: 'slider round' })
-                                    )
+                                    }, label),
+                                    createElement('span', { 
+                                        style: { 
+                                            marginLeft: 'auto', 
+                                            fontWeight: '600' 
+                                        } 
+                                    }, `${cart_total} ${currency_display}`),
+                                    createElement('i', { 
+                                        className: 'fa fa-chevron-right', 
+                                        style: { 
+                                            marginLeft: '10px' 
+                                        } 
+                                    })
                                 )
-                            )
-                        ) : (
-                            // Grouped View (If not Whitelabeled)
-                            createElement('div', { className: 'payment-buttons' },
-                                createElement('button', {
-                                    type: 'button', className: 'upay-payment-method',
-                                    onClick: () => handleMethodClick('knet'),
-                                    style: { display: 'flex', width: '100%', padding: '15px', alignItems: 'center', border: '1px solid #ccc', borderRadius: '4px', background: '#fff' }
+                            ))
+                        ),
+
+                        // Save Card Toggle for New Cards
+                        save_card_enabled && upayData.upayment_payment_type === 'cc' && !upayData.card_token && (
+                            createElement('div', { 
+                                    style: { 
+                                        display: 'flex', 
+                                        justifyContent: 'space-between', 
+                                        alignItems: 'center', 
+                                        padding: '15px', 
+                                        borderTop: '1px solid #eee', 
+                                        marginTop: '10px' 
+                                    } 
                                 },
-                                    Object.keys(payment_icons).map(key => (
-                                        key !== 'apple-pay-knet' && createElement('span', { key, style: { marginRight: '8px' } },
-                                            createElement('img', { src: `${plugin_url}assets/images/${key}.png`, style: { height: '22px' } })
-                                        )
-                                    )),
-                                    createElement('span', { style: { marginLeft: 'auto', fontWeight: '600' } }, `${cart_total} ${currency_display}`),
-                                    createElement('i', { className: 'fa fa-chevron-right', style: { marginLeft: '10px' } })
+                                createElement('label', { 
+                                    style: { 
+                                        fontSize: '0.9em' 
+                                    } 
+                                }, translation.save_card_label || 'Save card for future use?'),
+                                createElement('label', { 
+                                        className: 'switch' 
+                                    },
+                                    createElement('input', { 
+                                        type: 'checkbox', 
+                                        id: 'chkSaveCard', 
+                                        checked: (upayData.save_card !== undefined ? upayData.save_card === '1' : ((save_card_enabled && is_logged_in && save_card_toggle_on) ? true : false)), 
+                                        onChange: toggleSaveCard 
+                                    }),
+                                    createElement('span', { className: 'slider round' })
                                 )
                             )
                         )
-                    : ''
+                    ) : (
+                        // Grouped View (If not Whitelabeled)
+                        createElement('div', { className: 'payment-buttons' },
+                            createElement('button', {
+                                type: 'button', className: 'upay-payment-method',
+                                onClick: () => handleMethodClick('knet'),
+                                style: { display: 'flex', width: '100%', padding: '15px', alignItems: 'center', border: '1px solid #ccc', borderRadius: '4px', background: '#fff' }
+                            },
+                                Object.keys(payment_icons).map(key => (
+                                    key !== 'apple-pay-knet' && createElement('span', { key, style: { marginRight: '8px' } },
+                                        createElement('img', { src: `${plugin_url}assets/images/${key}.png`, style: { height: '22px' } })
+                                    )
+                                )),
+                                createElement('span', { style: { marginLeft: 'auto', fontWeight: '600' } }, `${cart_total} ${currency_display}`),
+                                createElement('i', { className: 'fa fa-chevron-right', style: { marginLeft: '10px' } })
+                            )
+                        )
+                    )
                 )
             );
         };
