@@ -72,6 +72,7 @@ function woocommerceUpaymentsInit() {
         public $charge;
         public $autoDeduction;
         public $hmacSignatureKey;
+        public $upaymentsPaymentLanguage;
         public const DISPLAY_NONE = 'display:none;';
         public const PHONE_CLEAN_REGEX = '/[^A-Za-z0-9\-]/';
 
@@ -104,6 +105,7 @@ function woocommerceUpaymentsInit() {
             $this->saveCardEnabled = $this->get_option("enable_save_card");
             $this->autoDeduction = $this->get_option("enable_subscriptions");
             $this->hmacSignatureKey = $this->get_option("hmac_signature_key");
+            $this->upaymentsPaymentLanguage = $this->get_option("upayments_payment_language");
 
             // Load settings and hooks
             $this->init_form_fields();
@@ -267,6 +269,17 @@ function woocommerceUpaymentsInit() {
                     "description" => __("Copy/paste values from UPayments dashboard", $this->id),
                     "default" => "",
                     "desc_tip" => true
+                ),
+                "upayments_payment_language" => array(
+                    "title"       => __("Upayments Payment Language", $this->id),
+                    "type"        => "select",
+                    "description" => __("Choose Default Language for Upayments Checkout", $this->id),
+                    "default"     => "ar",
+                    "options"     => array(
+                        "en" => __("English", $this->id),
+                        "ar" => __("Arabic", $this->id),
+                    ),
+                    "desc_tip"    => true,
                 ),
                 "debug" => array(
                     "title" => __("Debug", $this->id),
@@ -1182,7 +1195,7 @@ function woocommerceUpaymentsInit() {
                     "src" => "woocommerce",
                 ],
                 "is_whitelabled" => $whitelabled,
-                "language" => "en",
+                "language" => $this->upaymentsPaymentLanguage,
                 "isSaveCard" => $isSaveCard,
                 "paymentGateway" => ["src" => $src,],
                 "tokens" => [
