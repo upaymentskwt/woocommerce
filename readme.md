@@ -165,3 +165,6 @@ Supported currency codes are: KWD, SAR, USD, BHD, EUR, OMR, QAR, AED
 
 = 3.2.3 = 
  -Readme Updated + Block Checkout Updated
+
+= 3.2.5 = 
+ -Security Enhancements
