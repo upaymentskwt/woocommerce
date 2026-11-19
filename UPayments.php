@@ -3,7 +3,7 @@
  * Plugin Name: UPayments
  * Plugin URI: https://developers.upayments.com/reference/woocommerce
  * Description: UPayments Plugin with Unified payment gateway supporting Old/New design, Save Card, and Multimerchant. Supports Block Checkout, Auto Deduction for Subscriptions, Bookable Products, KFAST.
- * Version: 3.2.4
+ * Version: 3.2.5
  * Author: <a href="https://developers.upayments.com/reference/woocommerce" target="_blank">UPayments Company</a>
  * Author URI: https://developers.upayments.com/reference/woocommerce
  * Requires at least: 5.6
@@ -707,7 +707,9 @@ function woocommerceUpaymentsInit() {
             if (isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] !== 'POST') {
                 $this->log("Webhook rejected: Invalid request method " . $_SERVER['REQUEST_METHOD']);
                 status_header(405);
-                exit('Method Not Allowed');
+                wc_add_notice(__("Webhook rejected: Invalid request method.". $_SERVER['REQUEST_METHOD'], 'upayments'),'error');
+                wp_redirect(add_query_arg('failed', 'true', wc_get_checkout_url()));
+                exit();
             }
 
             // 2. Safely extract wc_order_id (from URL query string or POST payload)
@@ -721,14 +723,18 @@ function woocommerceUpaymentsInit() {
             if (!$order_id) {
                 $this->log("Webhook rejected: Missing or invalid wc_order_id.");
                 status_header(400);
-                exit('Bad Request');
+                wc_add_notice(__("Webhook rejected: Missing or invalid wc_order_id.", 'upayments'),'error');
+                wp_safe_redirect(add_query_arg('failed', 'true', wc_get_checkout_url()));
+                exit();
             }
 
             $order = wc_get_order($order_id);
             if (!$order instanceof \WC_Order) {
                 $this->log("Webhook rejected: Order #{$order_id} not found or invalid.");
                 status_header(404);
-                exit('Order Not Found');
+                wc_add_notice(__("Webhook rejected: Order #{$order_id} not found or invalid.", 'upayments'),'error');
+                wp_safe_redirect(add_query_arg('failed', 'true', wc_get_checkout_url()));
+                exit();
             }
 
             $pos = strpos($order_id, "?PaymentID");
@@ -805,6 +811,7 @@ function woocommerceUpaymentsInit() {
                             
                             $order->update_status($paid_order_status, __('Payment successful with UPayments. PaymentID: '.$paymentID, $this->domain));
                             $woocommerce->cart->empty_cart();
+
                             exit();
                         }else{
                             $this->log("Order status not CAPTURED. " . $status);
@@ -826,7 +833,7 @@ function woocommerceUpaymentsInit() {
                 }
 
                 status_header(500);
-                exit('Server Error');
+                wp_redirect(wc_get_checkout_url());
             }
         }
 
